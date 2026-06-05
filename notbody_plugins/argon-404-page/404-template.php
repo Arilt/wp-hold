@@ -31,6 +31,9 @@ $search_url = home_url( '/?s=' );
 <!-- 主体内容 -->
 <div class="a404-body">
 
+    <!-- <div class="a404-title">404?</div>
+    <div class="a404-text">Got lost? How.....? why.....? Ahhhh....</div> -->
+
     <!-- 搜索框 -->
     <div class="a404-search">
         <form method="get" action="<?php echo esc_url( $search_url ); ?>">
