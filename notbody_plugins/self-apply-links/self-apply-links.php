@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Argon FriendLink Apply (内置链接管理器版)
  * Description: 自助申请友链，数据写入 WordPress 内置链接管理器（wp_links），支持 AJAX 提交、邮件通知、后台审核。短代码 [argon_friendlink_apply] 和 [argon_friendlink_list]
- * Version: 0.0.6
+ * Version: 0.0.7
  * Author: 小崽安
  */
 
@@ -259,15 +259,13 @@ class Argon_FriendLink_Apply {
 
             // 获取该分类下所有可见链接（link_visible = 'Y'）
             $bookmarks = get_bookmarks(array(
-                'category'        => $category->term_id,
-                'hide_invisible'  => true,   // 仅获取 link_visible = 'Y' 的链接
-                'orderby'         => 'name',
-                'order'           => 'ASC',
+                'category' => $category->term_id,
+                'hide_invisible' => true,   // 仅获取 link_visible = 'Y' 的链接
+                'orderby' => 'name',
+                'order' => 'ASC',
             ));
 
-            if (empty($bookmarks)) {
-                continue;
-            }
+            if (empty($bookmarks)) continue;
 
             $output .= '<div class="friend-link-category">';
             $output .= '<h3 class="category-title">' . esc_html($category->name) . '</h3>';
@@ -361,15 +359,14 @@ class Argon_FriendLink_Apply {
 
         // 构建链接数据（使用 WordPress 原生函数 wp_insert_link）
         $link_data = array(
-            'link_name'        => $site_name,                      // 网站名称（不添加前缀）
-            'link_url'         => $site_url,
-            'link_image'       => $site_logo,
+            'link_name' => $site_name,                      // 网站名称（不添加前缀）
+            'link_url' => $site_url,
+            'link_image' => $site_logo,
             'link_description' => $description,
-            'link_rss'         => $rss,
-            'link_visible'     => 'N',                              // 'N' = 不可见，待审核状态
-            'link_target'      => '_blank',
-            'link_updated'     => current_time('mysql'),  // 记录提交时间
-            'link_notes'       => '通过自助友链申请插件提交，时间：' . current_time('mysql'),
+            'link_rss' => $rss,
+            'link_visible' => 'N',                              // 'N' = 不可见，待审核状态
+            'link_target' => '_blank',
+            'link_notes' => '来自友链插件',
         );
 
         // 包含 wp_insert_link 函数所需的文件
@@ -377,6 +374,9 @@ class Argon_FriendLink_Apply {
 
         $link_id = wp_insert_link($link_data);
         if (is_wp_error($link_id) || $link_id === 0) wp_send_json_error('链接写入失败，请稍后再试。');
+
+        // 修复 link_updated 字段（强制写入当前时间）
+        $wpdb->update($wpdb->links, array('link_updated' => current_time('mysql')), array('link_id' => $link_id));
 
         // 将链接关联到「待审核友链」分类
         $term_result = wp_set_object_terms($link_id, (int) $pending_cat_id, 'link_category');
@@ -388,7 +388,7 @@ class Argon_FriendLink_Apply {
         // 发送邮件通知管理员
         $this->send_admin_notification($link_id, $site_name, $site_url, $site_logo, $description, $rss);
 
-        wp_send_json_success('申请已提交！管理员将尽快审核。' . current_time('mysql'));
+        wp_send_json_success('申请已提交！会尽快审核的o(*￣▽￣*)ブ。');
     }
 
     /**
@@ -441,6 +441,7 @@ class Argon_FriendLink_Apply {
         // 获取用户选择的分类（如果有）
         $target_cat_id = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
         if ($target_cat_id <= 0) {
+            // 如果没有传入，则使用默认分类（网线空间）
             $target_cat_id = $this->ensure_approved_category();
         }
 
@@ -557,11 +558,10 @@ class Argon_FriendLink_Apply {
                             <tr><th><input type="checkbox" id="select-all"></th><th>ID</th><th>网站名称</th><th>链接地址</th><th>Logo</th><th>简介</th><th>提交时间</th><th>批准后分类</th><th>操作</th></tr>
                         </thead>
                         <tbody>
-                        <?php foreach ($pending as $link): ?>
-                            <?php
+                        <?php foreach ($pending as $link): 
                             $link_cats = wp_get_object_terms($link->link_id, 'link_category', array('fields' => 'names'));
                             $current_cat = !empty($link_cats) ? $link_cats[0] : '未分类';
-                            ?>
+                        ?>
                         <tr>
                                 <td><input type="checkbox" name="link_ids[]" value="<?php echo $link->link_id; ?>"></td>
                                 <td><?php echo $link->link_id; ?></td>
