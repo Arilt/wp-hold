@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Argon FriendLink Apply
  * Description: 自助申请友链，支持AJAX提交、邮件通知、后台审核。短代码 [argon_friendlink_apply] 和 [argon_friendlink_list]
- * Version: 0.0.1
+ * Version: 0.0.2
  * Author: 小崽安
  */
 
@@ -188,11 +188,31 @@ class Argon_FriendLink_Apply {
         $approve_url = admin_url('admin-post.php?action=argon_fl_approve&id=' . $apply_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $apply_id));
         $delete_url  = admin_url('admin-post.php?action=argon_fl_delete&id=' . $apply_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $apply_id));
 
-        $message = "<html><body><p>「{$blog_name}」 提交了待审核的交换友链申请<br>@{$site_name} 的信息:</p>
-        <ul><li><strong>网站名称:</strong> {$site_name}</li><li><strong>链接地址:</strong> <a href='{$site_url}'>{$site_url}</a></li>
-        <li><strong>Logo:</strong> <a href='{$site_logo}'>{$site_logo}</a></li><li><strong>简介:</strong> {$description}</li>
-        <li><strong>RSS:</strong> <a href='{$rss}'>{$rss}</a></li></ul>
-        <p><a href='{$manage_url}'>前往审核</a> | <a href='{$approve_url}'>通过审核</a> | <a href='{$delete_url}'>删除该链接</a></p></body></html>";
+        $message = "<html>
+            <body>
+                <div style='background: #fff;box-shadow: 0 15px 35px rgba(50,50,93,.1), 0 5px 15px rgba(0,0,0,.07);border-radius: 6px;margin: 15px auto 50px auto;padding: 35px 30px;max-width: min(calc(100% - 100px), 1200px);'>
+                    <div style='font-size:24px;text-align:center;margin-bottom:15px;line-height:120%;'>
+                        <p>「{$site_name}」 申请交换友链</p>
+                    </div>
+                    <div style='background: rgba(0, 0, 0, .15);height: 1px;width: 100%;max-width: 300px;margin: auto;margin-bottom: 35px;'></div>
+                    <div style='font-size: 18px;border-left: 4px solid rgba(0, 0, 0, .15);/*width: max-content;width: -moz-max-content;*/margin: auto;padding: 20px 30px;background: rgba(0,0,0,.08);border-radius: 6px;box-shadow: 0 2px 4px rgba(0,0,0,.075)!important;min-width: 60%;max-width: 90%;margin-bottom: 40px;'>
+                    <div style='margin-bottom: 10px;'>
+                        <strong><span style='color: #5e72e4;'>@{$site_name} </span>  ". __('的信息：', "argon") ." </strong>
+                    </div>
+                    <ul>
+                        <li><strong>网站名称:</strong> {$site_name}</li><li><strong>链接地址:</strong> <a href='{$site_url}'>{$site_url}</a></li>
+                        <li><strong>Logo:</strong> <a href='{$site_logo}'>{$site_logo}</a></li>
+                        <li><strong>简介:</strong> {$description}</li>
+                        <li><strong>RSS:</strong> <a href='{$rss}'>{$rss}</a></li>
+                    </ul>
+                </div>
+                <p style='box-sizing:border-box' align='center'>
+                    <a href='{$manage_url}' style='line-height: 1; color: #fff;background-color: #5e72e4;border-color: #5e72e4;box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08);padding: 10px 15px;font-size: 18px;border-radius: 4px;text-decoration: none; margin: 10px;'>前往审核</a>". __(' | ', "argon") ."
+                    <a href='{$approve_url}' style='line-height: 1; color: #fff;background-color: #1174e6;border-color: #5e72e4;box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08);padding: 10px 15px;font-size: 18px;border-radius: 4px;text-decoration: none; margin: 10px;'>通过审核</a>". __(' | ', "argon") ."
+                    <a href='{$delete_url}' style='line-height: 1; color: #fff;background-color: #e45e5e;border-color: #5e72e4;box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08);padding: 10px 15px;font-size: 18px;border-radius: 4px;text-decoration: none; margin: 10px;'>删除该链接</a>
+                </p>
+            </body>
+        </html>";
         wp_mail($admin_email, "【新友链】-- 「{$site_name}」 提交了友链申请", $message, ['Content-Type: text/html; charset=UTF-8']);
 
         wp_send_json_success('申请已提交！管理员将尽快审核。');
