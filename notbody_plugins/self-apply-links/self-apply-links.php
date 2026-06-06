@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Argon FriendLink Apply (内置链接管理器版)
  * Description: 自助申请友链，数据写入 WordPress 内置链接管理器（wp_links），支持 AJAX 提交、邮件通知、后台审核。短代码 [argon_friendlink_apply] 和 [argon_friendlink_list]
- * Version: 0.0.4
+ * Version: 0.0.5
  * Author: 小崽安
  */
 
@@ -14,6 +14,13 @@ class Argon_FriendLink_Apply {
      * 待审核链接的默认分类名称（如果不存在则会自动创建）
      */
     const PENDING_CATEGORY = '待审核友链';
+    const PENDING_CATEGORY_SLUG = 'wait-approved';
+
+    /**
+     * 审核通过后默认移入的分类名称
+     */
+    const APPROVED_CATEGORY = '网线空间';
+    const APPROVED_CATEGORY_SLUG = 'blog-line';
 
     /**
      * 构造函数
@@ -52,34 +59,92 @@ class Argon_FriendLink_Apply {
     }
 
     /**
-     * 激活插件：创建/确保「待审核友链」分类存在
+     * 激活插件：创建「待审核友链」和「网线空间」分类
      */
     public function activate() {
         $this->ensure_pending_category();
+        $this->ensure_approved_category();
     }
 
     /**
-     * 确保「待审核友链」分类存在，返回其 term_id
+     * 确保「待审核友链」分类存在，返回其 term_id（整数）
+     * 修复：强制返回整数类型，避免返回数组或 WP_Error
      *
-     * @return int|WP_Error
+     * @__return int|WP_Error
      */
     private function ensure_pending_category() {
-        $term = term_exists(self::PENDING_CATEGORY, 'link_category');
-        if (!$term) {
-            $term = wp_insert_term(self::PENDING_CATEGORY, 'link_category', array(
-                'description' => '用于存放待审核的友链申请',
-                'slug'        => sanitize_title(self::PENDING_CATEGORY)
-            ));
+        $term_name = self::PENDING_CATEGORY;
+        $taxonomy = 'link_category';
+        $slug = self::PENDING_CATEGORY_SLUG;
+
+        // 1. 先按名称查找
+        $term_existing = term_exists($term_name, $taxonomy);
+        if ($term_existing !== 0 && $term_existing !== null) {
+            $term_id = is_array($term_existing) ? $term_existing['term_id'] : $term_existing;
+            if (is_numeric($term_id) && $term_id > 0) {
+                return (int) $term_id;
+            }
         }
-        return is_array($term) ? $term['term_id'] : $term;
+        
+        // 2. 按 slug 查找（防止名称冲突）
+        $by_slug = get_term_by('slug', $slug, $taxonomy);
+        if ($by_slug instanceof WP_Term) {
+            return (int) $by_slug->term_id;
+        }
+
+        // 3. 不存在则创建
+        $term = wp_insert_term($term_name, $taxonomy, array(
+            'description' => '用于存放待审核的友链申请',
+            'slug'        => sanitize_title($slug)
+        ));
+
+        if (is_wp_error($term)) {
+            // 如果创建失败（例如 slug 冲突），再次尝试通过 slug 获取
+            $fallback = get_term_by('slug', $slug, $taxonomy);
+            if ($fallback instanceof WP_Term) {
+                return (int) $fallback->term_id;
+            }
+            return $term; // 返回错误对象，上层会处理
+        }
+
+        return (int) $term['term_id'];
     }
 
     /**
-     * 获取「待审核友链」分类的 term_id
+     * 确保「网线空间」分类存在，返回其 term_id（整数）
      */
-    private function get_pending_category_id() {
-        $term = term_exists(self::PENDING_CATEGORY, 'link_category');
-        return is_array($term) ? $term['term_id'] : $term;
+    private function ensure_approved_category() {
+        $term_name = self::APPROVED_CATEGORY;
+        $taxonomy = 'link_category';
+        $slug = self::APPROVED_CATEGORY_SLUG;
+
+        $term_existing = term_exists($term_name, $taxonomy);
+        if ($term_existing !== 0 && $term_existing !== null) {
+            $term_id = is_array($term_existing) ? $term_existing['term_id'] : $term_existing;
+            if (is_numeric($term_id) && $term_id > 0) {
+                return (int) $term_id;
+            }
+        }
+
+        $by_slug = get_term_by('slug', $slug, $taxonomy);
+        if ($by_slug instanceof WP_Term) {
+            return (int) $by_slug->term_id;
+        }
+
+        $term = wp_insert_term($term_name, $taxonomy, array(
+            'description' => '审核通过的友链默认分类',
+            'slug'        => sanitize_title($slug)
+        ));
+
+        if (is_wp_error($term)) {
+            $fallback = get_term_by('slug', $slug, $taxonomy);
+            if ($fallback instanceof WP_Term) {
+                return (int) $fallback->term_id;
+            }
+            return $term;
+        }
+
+        return (int) $term['term_id'];
     }
 
     /**
@@ -162,24 +227,16 @@ class Argon_FriendLink_Apply {
     public function render_apply_form() {
         ob_start();
         ?>
-        <!-- <div class="argon-fl-container">
-            <div class="argon-fl-criteria">
-                <p>✔ 您的网站已稳定运行，且有一定的文章量；</p>
-                <p>✔ 网站内容健康、积极向上、维护中国共产党的领导，凡内容污秽不堪、反动反共的都不会通过申请。</p>
-                <p>✔ 请在您的网站友情链接中增加本站信息。审核时，若未在您的站点中检测到本站链接，审核不予通过。</p>
-                <p>✔ 如果申请后，长时间未通过审核，有可能是博主太忙未看到，可以通过联系告知我，谢谢～</p>
-            </div> -->
-            <div id="argon-fl-message" class="argon-fl-message" style="display:none;"></div>
-            <form id="argon-fl-form">
-                <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
-                <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
-                <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
-                <div class="form-group"><label>描述 <span class="required-star">*</span></label><textarea id="description" rows="3" placeholder="请输入简介" required></textarea></div>
-                <div class="form-group"><label>RSS 地址 <span class="required-star">*</span></label><input type="url" id="rss" placeholder="https://yourdomain.com/feed.xml" required></div>
-                <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请</button><button type="reset" class="btn-reset">🔄 重提</button></div>
-                <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
-            </form>
-        <!-- </div> -->
+        <div id="argon-fl-message" class="argon-fl-message" style="display:none;"></div>
+        <form id="argon-fl-form">
+            <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
+            <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
+            <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
+            <div class="form-group"><label>描述 <span class="required-star">*</span></label><textarea id="description" rows="3" placeholder="请输入简介" required></textarea></div>
+            <div class="form-group"><label>RSS 地址 <span class="required-star">*</span></label><input type="url" id="rss" placeholder="https://yourdomain.com/feed.xml" required></div>
+            <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请</button><button type="reset" class="btn-reset">🔄 重提</button></div>
+            <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
+        </form>
         <?php
         return ob_get_clean();
     }
@@ -312,8 +369,8 @@ class Argon_FriendLink_Apply {
 
         // 确保「待审核友链」分类存在
         $pending_cat_id = $this->ensure_pending_category();
-        if (is_wp_error($pending_cat_id)) {
-            wp_send_json_error('系统错误：无法创建待审核分类');
+        if (is_wp_error($pending_cat_id) || !is_numeric($pending_cat_id) || $pending_cat_id <= 0) {
+            wp_send_json_error('系统错误：待审核分类无效，请检查数据库。');
         }
 
         // 构建链接数据（使用 WordPress 原生函数 wp_insert_link）
@@ -337,10 +394,10 @@ class Argon_FriendLink_Apply {
         }
 
         // 将链接关联到「待审核友链」分类
-        $term_result = wp_set_object_terms($link_id, $pending_cat_id, 'link_category');
+        $term_result = wp_set_object_terms($link_id, (int) $pending_cat_id, 'link_category');
         if (is_wp_error($term_result)) {
             // 分类关联失败时记录日志但不阻止提交（链接本身已存在）
-            error_log('Argon FriendLink: 关联待审核分类失败 - ' . $term_result->get_error_message());
+            error_log('Argon FriendLink: 关联「待审核友链」失败 - ' . $term_result->get_error_message());
         }
 
         // 发送邮件通知管理员
@@ -351,63 +408,42 @@ class Argon_FriendLink_Apply {
 
     /**
      * 发送邮件通知管理员（含快速审核链接）
-     *
-     * @param int    $link_id     链接 ID
-     * @param string $site_name   网站名称
-     * @param string $site_url    网站链接
-     * @param string $site_logo   Logo 地址
-     * @param string $description 描述
-     * @param string $rss         RSS 地址
      */
     private function send_admin_notification($link_id, $site_name, $site_url, $site_logo, $description, $rss) {
         $admin_email = get_option('admin_email');
-        $blog_name   = get_bloginfo('name');
-        $manage_url  = admin_url('link-manager.php');                                     // 链接管理页面
         $edit_url    = admin_url('link.php?action=edit&link_id=' . $link_id);            // 编辑该链接
         $approve_url = admin_url('admin-post.php?action=argon_fl_approve&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link_id));
         $delete_url  = admin_url('admin-post.php?action=argon_fl_delete&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link_id));
 
         $subject = "【新友链】-- 「{$site_name}」 提交了友链申请";
-
-        $message = "<html>
-        <body>
-            <div style='background: #fff;box-shadow: 0 15px 35px rgba(50,50,93,.1), 0 5px 15px rgba(0,0,0,.07);border-radius: 6px;margin: 15px auto 50px auto;padding: 35px 30px;max-width: min(calc(100% - 100px), 1200px);'>
-                <div style='font-size:24px;text-align:center;margin-bottom:15px;line-height:120%;'>
-                    <p>「{$site_name}」 申请交换友链</p>
-                </div>
-                <div style='background: rgba(0, 0, 0, .15);height: 1px;width: 100%;max-width: 300px;margin: auto;margin-bottom: 35px;'></div>
-                <div style='font-size: 18px;border-left: 4px solid rgba(0, 0, 0, .15);margin: auto;padding: 20px 30px;background: rgba(0,0,0,.08);border-radius: 6px;box-shadow: 0 2px 4px rgba(0,0,0,.075)!important;min-width: 60%;max-width: 90%;margin-bottom: 40px;'>
-                    <div style='margin-bottom: 10px;'>
-                        <strong><span style='color: #5e72e4;'>@{$site_name} </span> 的信息：</strong>
-                    </div>
-                    <ul>
-                        <li><strong>网站名称：</strong> {$site_name}</li>
-                        <li><strong>链接地址：</strong> <a href='{$site_url}'>{$site_url}</a></li>
-                        <li><strong>Logo：</strong> <a href='{$site_logo}'>{$site_logo}</a></li>
-                        <li><strong>简介：</strong> {$description}</li>
-                        <li><strong>RSS：</strong> <a href='{$rss}'>{$rss}</a></li>
-                    </ul>
-                </div>
-                <p style='box-sizing:border-box; text-align: center; margin-top: 20px;'>
-                    <div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;'>
-                        <a href='{$edit_url}' 
-                        style='line-height: 1; color: #fff; background-color: #5e72e4; border-color: #5e72e4; box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08); padding: 10px 15px; font-size: 18px; border-radius: 4px; text-decoration: none; display: inline-block; min-width: 120px; text-align: center;'>前往编辑</a>
-                        <a href='{$approve_url}' 
-                        style='line-height: 1; color: #fff; background-color: #1174e6; border-color: #5e72e4; box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08); padding: 10px 15px; font-size: 18px; border-radius: 4px; text-decoration: none; display: inline-block; min-width: 120px; text-align: center;'>通过审核</a>
-                        <a href='{$delete_url}' 
-                        style='line-height: 1; color: #fff; background-color: #e45e5e; border-color: #5e72e4; box-shadow: 0 4px 6px rgba(50,50,93,.11), 0 1px 3px rgba(0,0,0,.08); padding: 10px 15px; font-size: 18px; border-radius: 4px; text-decoration: none; display: inline-block; min-width: 120px; text-align: center;'>删除该链接</a>
-                    </div>
-                </p>
-                <p align='center' style='color:#6c757d; font-size:12px;'>—— 此邮件由 Argon FriendLink Apply 插件自动发送 ——</p>
+        $message = "<html><body>
+        <div style='background:#fff; border-radius:6px; padding:35px 30px; max-width:1200px; margin:15px auto;'>
+            <div style='font-size:24px; text-align:center;'>「{$site_name}」 申请交换友链</div>
+            <div style='height:1px; background:rgba(0,0,0,0.15); width:300px; margin:20px auto;'></div>
+            <div style='border-left:4px solid rgba(0,0,0,0.15); padding:20px 30px; background:rgba(0,0,0,0.05); border-radius:6px; margin-bottom:30px;'>
+                <div><strong><span style='color:#5e72e4;'>@{$site_name}</span> 的信息：</strong></div>
+                <ul>
+                    <li><strong>网站名称：</strong> {$site_name}</li>
+                    <li><strong>链接地址：</strong> <a href='{$site_url}'>{$site_url}</a></li>
+                    <li><strong>Logo：</strong> <a href='{$site_logo}'>{$site_logo}</a></li>
+                    <li><strong>简介：</strong> {$description}</li>
+                    <li><strong>RSS：</strong> <a href='{$rss}'>{$rss}</a></li>
+                </ul>
             </div>
-        </body>
-        </html>";
+            <p style='text-align:center; margin-top:20px;'>
+                <a href='{$edit_url}' style='background:#5e72e4; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>前往编辑</a>
+                <a href='{$approve_url}' style='background:#1174e6; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>审核通过</a>
+                <a href='{$delete_url}' style='background:#e45e5e; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>删除该链接</a>
+            </p>
+            <p align='center' style='color:#6c757d; font-size:12px;'>—— 此邮件由 Argon FriendLink Apply 插件自动发送 ——</p>
+        </div>
+        </body></html>";
 
         wp_mail($admin_email, $subject, $message, array('Content-Type: text/html; charset=UTF-8'));
     }
 
     /**
-     * 处理审核通过：将链接设为可见
+     * 处理审核通过：将链接设为可见，并移出「待审核友链」分类，移入「网线空间」分类
      */
     public function handle_approve() {
         if (!current_user_can('manage_links')) {
@@ -423,7 +459,7 @@ class Argon_FriendLink_Apply {
 
         require_once(ABSPATH . 'wp-admin/includes/bookmark.php');
 
-        // 更新链接可见性为 'Y'
+        // 1. 更新链接可见性为 'Y'
         $update_data = array(
             'link_id'      => $link_id,
             'link_visible' => 'Y',
@@ -435,7 +471,17 @@ class Argon_FriendLink_Apply {
         }
 
         // 可选：从「待审核友链」分类中移出（保留在其它分类或不做处理）
-        // 注：这里不移除分类，保留原分类供管理员后续整理
+        // 2. 更新至「网线空间」分类
+        $approved_cat_id = $this->ensure_approved_category();
+        if (is_wp_error($approved_cat_id) || !is_numeric($approved_cat_id) || $approved_cat_id <= 0) {
+            error_log('Argon FriendLink: 「网线空间」分类无效 - ' . (is_wp_error($approved_cat_id) ? $approved_cat_id->get_error_message() : 'ID为空'));
+        } else {
+            // 3. 将链接的分类替换为「网线空间」
+            $set_terms = wp_set_object_terms($link_id, (int) $approved_cat_id, 'link_category', false);
+            if (is_wp_error($set_terms)) {
+                error_log('Argon FriendLink: 将链接移入「网线空间」失败 - ' . $set_terms->get_error_message());
+            }
+        }
 
         $redirect_url = admin_url('link-manager.php');
         wp_redirect(add_query_arg('message', 'approved', $redirect_url));
@@ -495,27 +541,21 @@ class Argon_FriendLink_Apply {
             'orderby'        => 'link_id',
             'order'          => 'DESC',
         ));
-
         // 筛选出 link_visible !== 'Y' 的链接
-        $pending = array_filter($pending_links, function($link) {
-            return $link->link_visible !== 'Y';
-        });
-
+        $pending = array_filter($pending_links, function($link) { return $link->link_visible !== 'Y'; });
         ?>
         <div class="wrap">
             <h1>待审核友链申请</h1>
             <?php if (isset($_GET['message'])): ?>
-                <div class="notice notice-success is-dismissible">
-                    <p><?php echo $_GET['message'] === 'approved' ? '✅ 链接已通过审核并设为可见。' : '🗑️ 链接已删除。'; ?></p>
+                <div class="notice notice-success">
+                    <p><?php echo $_GET['message'] === 'approved' ? '✅ 链接已批准并移入「网线空间」分类。' : '🗑️ 链接已删除。'; ?></p>
                 </div>
             <?php endif; ?>
 
             <?php if (empty($pending)): ?>
-                <div class="notice notice-info">
-                    <p>🎉 暂无待审核的友链申请，一切正常！</p>
-                </div>
+                <div class="notice notice-info"><p>🎉 暂无待审核的友链申请！</p></div>
             <?php else: ?>
-                <table class="wp-list-table widefat fixed striped">
+                <table class="wp-list-table widefat striped">
                     <thead>
                         <tr><th>ID</th><th>网站名称</th><th>链接地址</th><th>描述</th><th>提交时间</th><th>操作</th></tr>
                     </thead>
@@ -529,8 +569,8 @@ class Argon_FriendLink_Apply {
                             <td><?php echo esc_html($link->link_updated); ?></td>
                             <td>
                                 <a href="<?php echo admin_url('link.php?action=edit&link_id=' . $link->link_id); ?>" class="button button-small">✏️ 编辑</a>
-                                <a href="<?php echo admin_url('admin-post.php?action=argon_fl_approve&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small button-primary" onclick="return confirm('通过审核后，该友链将公开显示。确认通过？')">✅ 通过</a>
-                                <a href="<?php echo admin_url('admin-post.php?action=argon_fl_delete&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small" style="background:#ef4444; color:white; border-color:#ef4444;" onclick="return confirm('确认删除该申请？删除后不可恢复。')">🗑️ 删除</a>
+                                <a href="<?php echo admin_url('admin-post.php?action=argon_fl_approve&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small button-primary" onclick="return confirm('批准后，该友链将公开显示并移入「网线空间」分类。确认通过？')">✅ 批准</a>
+                                <a href="<?php echo admin_url('admin-post.php?action=argon_fl_delete&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small" style="background:#ef4444; color:white;" onclick="return confirm('确认删除该申请？删除后不可恢复。')">🗑️ 删除</a>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -565,16 +605,15 @@ class Argon_FriendLink_Apply {
     /**
      * 根据筛选条件修改链接查询
      *
-     * @param object $query WP_Link_Query 对象
+     * @——param object $query WP_Link_Query 对象
      */
     public function filter_links_by_visibility($query) {
-        if (!is_admin() || !isset($_GET['link_visible']) || $_GET['link_visible'] === '') {
+        if (!is_admin() || !isset($_GET['link_visible']) || $_GET['link_visible'] === '' || empty($_GET['link_visible'])) {
             return;
         }
-
-        $visibility = $_GET['link_visible'];
-        if ($visibility === 'Y' || $visibility === 'N') {
-            $query->query_vars['link_visible'] = $visibility;
+        $vis = $_GET['link_visible'];
+        if ($vis === 'Y' || $vis === 'N') {
+            $query->query_vars['link_visible'] = $vis;
         }
     }
 
@@ -584,17 +623,13 @@ class Argon_FriendLink_Apply {
      */
     public function modify_visibility_text() {
         ?>
-        <script type="text/javascript">
-        jQuery(document).ready(function($) {
+        <script>
+        jQuery(function($) {
             // 修改链接列表中「可见性」列的显示
             $('.wp-list-table td.column-visible').each(function() {
-                var $cell = $(this);
-                var text = $cell.text().trim();
-                if (text === '不可见') {
-                    $cell.html('<span style="color:#f59e0b; background:#fff3e0; padding:2px 8px; border-radius:20px; font-size:12px;">⏳ 待审核</span>');
-                } else if (text === '可见') {
-                    $cell.html('<span style="color:#10b981; background:#e8faf0; padding:2px 8px; border-radius:20px; font-size:12px;">✅ 已通过</span>');
-                }
+                var text = $(this).text().trim();
+                if (text === '不可见') $(this).html('<span style="color:#f59e0b; background:#fff3e0; padding:2px 8px; border-radius:20px;">⏳ 待审核</span>');
+                else if (text === '可见') $(this).html('<span style="color:#10b981; background:#e8faf0; padding:2px 8px; border-radius:20px;">✅ 已通过</span>');
             });
         });
         </script>
