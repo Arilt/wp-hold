@@ -1,14 +1,14 @@
 <?php
 /**
- * Plugin Name: Argon FriendLink Apply (内置链接管理器版)
- * Description: 自助申请友链，数据写入 WordPress 内置链接管理器（wp_links），支持 AJAX 提交、邮件通知、后台审核。短代码 [argon_friendlink_apply] 和 [argon_friendlink_list]
- * Version: 0.0.7
+ * Plugin Name: Self FriendLink Apply
+ * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器（wp_links），支持 AJAX 提交、邮件通知、后台审核。短代码 [self_friendlink_apply] 和 [self_friendlink_list]
+ * Version: 1.0.0
  * Author: 小崽安
  */
 
 if (!defined('ABSPATH')) exit;
 
-class Argon_FriendLink_Apply {
+class Self_FriendLink_Apply {
 
     /**
      * 待审核链接的默认分类名称（如果不存在则会自动创建）
@@ -33,8 +33,8 @@ class Argon_FriendLink_Apply {
         register_activation_hook(__FILE__, array($this, 'activate'));
 
         // 注册短代码
-        add_shortcode('argon_friendlink_apply', array($this, 'render_apply_form'));
-        add_shortcode('argon_friendlink_list', array($this, 'render_friendlink_list'));
+        add_shortcode('self_friendlink_apply', array($this, 'render_apply_form'));
+        add_shortcode('self_friendlink_list', array($this, 'render_friendlink_list'));
 
         // 加载前端资源
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
@@ -47,8 +47,10 @@ class Argon_FriendLink_Apply {
         add_action('admin_menu', array($this, 'add_admin_menu'));
 
         // 邮件中的快速操作（通过 admin-post 处理，避免权限问题）
-        add_action('admin_post_argon_fl_approve', array($this, 'handle_approve'));
-        add_action('admin_post_argon_fl_delete', array($this, 'handle_delete'));
+        add_action('admin_post_self_fl_approve', array($this, 'handle_approve'));
+        add_action('admin_post_self_fl_delete', array($this, 'handle_delete'));
+
+        add_action('admin_post_self_fl_bulk_approve', array($this, 'handle_bulk_approve')); // 新增批量处理
 
         // 在链接列表页添加「待审核」筛选
         add_action('restrict_manage_links', array($this, 'add_link_visibility_filter'));
@@ -139,13 +141,13 @@ class Argon_FriendLink_Apply {
      * 加载前端资源（内联 CSS + JS）
      */
     public function enqueue_scripts() {
-        if (has_shortcode(get_post()->post_content, 'argon_friendlink_apply')) {
+        if (has_shortcode(get_post()->post_content, 'self_friendlink_apply')) {
             wp_add_inline_style('wp-block-library', $this->get_inline_css());
             wp_enqueue_script('jquery');
             wp_add_inline_script('jquery', $this->get_inline_js());
-            wp_localize_script('jquery', 'argon_fl_ajax', array(
+            wp_localize_script('jquery', 'self_fl_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce'    => wp_create_nonce('argon_fl_submit_nonce'),
+                'nonce'    => wp_create_nonce('self_fl_submit_nonce'),
             ));
         }
     }
@@ -155,8 +157,8 @@ class Argon_FriendLink_Apply {
      */
     private function get_inline_css() {
         return '
-        .argon-fl-container { max-width:800px; margin:2rem auto; padding:1.5rem; background:#fff; border-radius:1rem; box-shadow:0 10px 25px -5px rgba(0,0,0,0.05); }
-        .argon-fl-criteria { background:#e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
+        .self-fl-container { max-width:800px; margin:2rem auto; padding:1.5rem; background:#fff; border-radius:1rem; box-shadow:0 10px 25px -5px rgba(0,0,0,0.05); }
+        .self-fl-criteria { background:#e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
         .form-group { margin-bottom:1.2rem; }
         .form-group label { display:block; font-weight:600; margin-bottom:0.3rem; }
         .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #ccc; border-radius:0.375rem; }
@@ -168,9 +170,9 @@ class Argon_FriendLink_Apply {
         .btn-submit.loading .spinner { display:block; }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
         .btn-reset { background:#6c757d; color:#fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
-        .argon-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
-        .argon-fl-message.success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
-        .argon-fl-message.error { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+        .self-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
+        .self-fl-message.success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
+        .self-fl-message.error { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
         .required-tip { text-align:center; font-size:0.8rem; color:#6c757d; }
         ';
     }
@@ -181,28 +183,28 @@ class Argon_FriendLink_Apply {
     private function get_inline_js() {
         return '
         jQuery(document).ready(function($) {
-            $("#argon-fl-form").on("submit", function(e) {
+            $("#self-fl-form").on("submit", function(e) {
                 e.preventDefault();
                 var $form = $(this);
-                var $msg = $("#argon-fl-message");
+                var $msg = $("#self-fl-message");
                 var $btn = $form.find(".btn-submit");
                 $msg.hide().removeClass("success error").html("");
                 // 显示 loading
                 $btn.addClass("loading").prop("disabled", true);
                 var data = {
                     action: "submit_friendlink_apply",
-                    nonce: argon_fl_ajax.nonce,
+                    nonce: self_fl_ajax.nonce,
                     site_name: $("#site_name").val(),
                     site_url: $("#site_url").val(),
                     site_logo: $("#site_logo").val(),
                     description: $("#description").val(),
                     rss: $("#rss").val()
                 };
-                $.post(argon_fl_ajax.ajax_url, data, function(res) {
+                $.post(self_fl_ajax.ajax_url, data, function(res) {
                     $btn.removeClass("loading").prop("disabled", false);
                     if (res.success) {
                         $msg.addClass("success").html("✅ " + res.data).show();
-                        $("#argon-fl-form")[0].reset();
+                        $("#self-fl-form")[0].reset();
                     } else {
                         $msg.addClass("error").html("❌ " + res.data).show();
                     }
@@ -224,8 +226,8 @@ class Argon_FriendLink_Apply {
     public function render_apply_form() {
         ob_start();
         ?>
-        <div id="argon-fl-message" class="argon-fl-message" style="display:none;"></div>
-        <form id="argon-fl-form">
+        <div id="self-fl-message" class="self-fl-message" style="display:none;"></div>
+        <form id="self-fl-form">
             <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
             <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
             <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
@@ -245,7 +247,7 @@ class Argon_FriendLink_Apply {
     public function render_friendlink_list() {
         // 获取所有链接分类（link_category）
         $categories = get_terms(array(
-            'taxonomy'   => 'link_category',
+            'taxonomy' => 'link_category',
             'hide_empty' => true,
         ));
 
@@ -321,7 +323,7 @@ class Argon_FriendLink_Apply {
      */
     public function handle_ajax_submit() {
         // 验证 Nonce
-        check_ajax_referer('argon_fl_submit_nonce', 'nonce');
+        check_ajax_referer('self_fl_submit_nonce', 'nonce');
 
         // 获取并清理表单数据
         $site_name = sanitize_text_field($_POST['site_name']);
@@ -347,9 +349,7 @@ class Argon_FriendLink_Apply {
             $site_url
         ));
 
-        if ($exists) {
-            wp_send_json_error('该网站链接已提交过申请，请勿重复提交。');
-        }
+        if ($exists) wp_send_json_error('该网站链接已提交过申请，请勿重复提交。');
 
         // 确保「待审核友链」分类存在
         $pending_cat_id = $this->ensure_pending_category();
@@ -382,13 +382,13 @@ class Argon_FriendLink_Apply {
         $term_result = wp_set_object_terms($link_id, (int) $pending_cat_id, 'link_category');
         if (is_wp_error($term_result)) {
             // 分类关联失败时记录日志但不阻止提交（链接本身已存在）
-            error_log('Argon FriendLink: 关联「待审核友链」失败 - ' . $term_result->get_error_message());
+            error_log('Self FriendLink: 关联「待审核友链」失败 - ' . $term_result->get_error_message());
         }
 
         // 发送邮件通知管理员
         $this->send_admin_notification($link_id, $site_name, $site_url, $site_logo, $description, $rss);
 
-        wp_send_json_success('申请已提交！会尽快审核的o(*￣▽￣*)ブ。');
+        wp_send_json_success('申请已提交！会尽快添加o(*￣▽￣*)ブ。');
     }
 
     /**
@@ -397,8 +397,8 @@ class Argon_FriendLink_Apply {
     private function send_admin_notification($link_id, $site_name, $site_url, $site_logo, $description, $rss) {
         $admin_email = get_option('admin_email');
         $edit_url    = admin_url('link.php?action=edit&link_id=' . $link_id);            // 编辑该链接
-        $approve_url = admin_url('admin-post.php?action=argon_fl_approve&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link_id));
-        $delete_url  = admin_url('admin-post.php?action=argon_fl_delete&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link_id));
+        $approve_url = admin_url('admin-post.php?action=self_fl_approve&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('self_fl_manage_' . $link_id));
+        $delete_url  = admin_url('admin-post.php?action=self_fl_delete&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('self_fl_manage_' . $link_id));
 
         $subject = "【新友链】-- 「{$site_name}」 提交了友链申请";
         $message = "<html><body>
@@ -420,7 +420,7 @@ class Argon_FriendLink_Apply {
                 <a href='{$approve_url}' style='background:#1174e6; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>审核通过</a>
                 <a href='{$delete_url}' style='background:#e45e5e; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>删除该链接</a>
             </p>
-            <p align='center' style='color:#6c757d; font-size:12px;'>—— 此邮件由 Argon FriendLink Apply 插件自动发送 ——</p>
+            <p align='center' style='color:#6c757d; font-size:12px;'>—— 此邮件由 Self FriendLink Apply 插件自动发送 ——</p>
         </div>
         </body></html>";
 
@@ -433,10 +433,9 @@ class Argon_FriendLink_Apply {
     public function handle_approve() {
         if (!current_user_can('manage_links')) wp_die('权限不足，无法执行此操作');
 
-        $link_id = intval($_GET['link_id']);
-        $nonce = $_GET['_wpnonce'] ?? '';
-
-        if (!wp_verify_nonce($nonce, 'argon_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
+        $link_id = isset($_POST['link_id']) ? intval($_POST['link_id']) : (isset($_GET['link_id']) ? intval($_GET['link_id']) : 0);
+        $nonce = isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : (isset($_GET['_wpnonce']) ? $_GET['_wpnonce'] : '');
+        if (!$link_id || !wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
 
         // 获取用户选择的分类（如果有）
         $target_cat_id = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
@@ -449,7 +448,7 @@ class Argon_FriendLink_Apply {
 
         // 1. 更新链接可见性为 'Y'
         $update_data = array(
-            'link_id'      => $link_id,
+            'link_id' => $link_id,
             'link_visible' => 'Y',
         );
         wp_update_link($update_data);
@@ -458,12 +457,12 @@ class Argon_FriendLink_Apply {
         // 2. 更新至「网线空间」分类
         // $approved_cat_id = $this->ensure_approved_category();
         // if (is_wp_error($approved_cat_id) || !is_numeric($approved_cat_id) || $approved_cat_id <= 0) {
-        //     error_log('Argon FriendLink: 「网线空间」分类无效 - ' . (is_wp_error($approved_cat_id) ? $approved_cat_id->get_error_message() : 'ID为空'));
+        //     error_log('Self FriendLink: 「网线空间」分类无效 - ' . (is_wp_error($approved_cat_id) ? $approved_cat_id->get_error_message() : 'ID为空'));
         // } else {
         //     // 3. 将链接的分类替换为「网线空间」
         //     $set_terms = wp_set_object_terms($link_id, (int) $approved_cat_id, 'link_category', false);
         //     if (is_wp_error($set_terms)) {
-        //         error_log('Argon FriendLink: 将链接移入「网线空间」失败 - ' . $set_terms->get_error_message());
+        //         error_log('Self FriendLink: 将链接移入「网线空间」失败 - ' . $set_terms->get_error_message());
         //     }
         // }
         if (!is_wp_error($target_cat_id) && $target_cat_id > 0) {
@@ -471,7 +470,7 @@ class Argon_FriendLink_Apply {
         }
 
         // 重定向回待审核页面，并携带成功消息
-        $redirect_url = admin_url('link-manager.php?page=argon-fl-pending');
+        $redirect_url = admin_url('link-manager.php?page=self-fl-pending');
         wp_redirect(add_query_arg('message', 'approved', $redirect_url));
         exit;
     }
@@ -485,7 +484,7 @@ class Argon_FriendLink_Apply {
         $link_id = intval($_GET['link_id']);
         $nonce = $_GET['_wpnonce'] ?? '';
 
-        if (!wp_verify_nonce($nonce, 'argon_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
+        if (!wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
 
         require_once(ABSPATH . 'wp-admin/includes/bookmark.php');
 
@@ -493,8 +492,27 @@ class Argon_FriendLink_Apply {
 
         if ($result === false) wp_die('删除链接失败，请稍后再试。');
 
-        $redirect_url = admin_url('link-manager.php?page=argon-fl-pending');
+        $redirect_url = admin_url('link-manager.php?page=self-fl-pending');
         wp_redirect(add_query_arg('message', 'deleted', $redirect_url));
+        exit;
+    }
+
+    public function handle_bulk_approve() {
+        if (!current_user_can('manage_links')) wp_die('权限不足');
+        if (!isset($_POST['bulk_nonce']) || !wp_verify_nonce($_POST['bulk_nonce'], 'self_fl_bulk_action')) wp_die('无效请求');
+
+        $link_ids = isset($_POST['link_ids']) ? array_map('intval', (array) $_POST['link_ids']) : array();
+        $target_cat_id = isset($_POST['bulk_category']) ? intval($_POST['bulk_category']) : 0;
+        if ($target_cat_id <= 0) $target_cat_id = $this->ensure_approved_category();
+
+        require_once(ABSPATH . 'wp-admin/includes/bookmark.php');
+        foreach ($link_ids as $link_id) {
+            wp_update_link(array('link_id' => $link_id, 'link_visible' => 'Y'));
+            if (!is_wp_error($target_cat_id) && $target_cat_id > 0) {
+                wp_set_object_terms($link_id, (int) $target_cat_id, 'link_category', false);
+            }
+        }
+        wp_redirect(add_query_arg('message', 'bulk_approved', admin_url('admin.php?page=self-fl-pending')));
         exit;
     }
 
@@ -508,7 +526,7 @@ class Argon_FriendLink_Apply {
             '待审核友链',
             '待审核友链',
             'manage_links',
-            'argon-fl-pending',
+            'self-fl-pending',
             array($this, 'pending_links_page')
         );
     }
@@ -520,15 +538,12 @@ class Argon_FriendLink_Apply {
         // 获取所有不可见链接（待审核）
         $all_links = get_bookmarks(array(
             'hide_invisible' => false,           // 获取所有链接（包括不可见的）
-            'orderby'        => 'link_id',
-            'order'          => 'DESC',
+            'orderby' => 'link_id',
+            'order' => 'DESC',
         ));
         // 筛选出 link_visible !== 'Y' 的链接
-        // $pending = array_filter($pending_links, function($link) { return $link->link_visible !== 'Y'; });
-        $pending = array();
         $pending_cat_id = $this->ensure_pending_category(); // 待审核分类 ID
-        $uncat_id = get_term_by('slug', 'uncategorized', 'link_category') ? get_term_by('slug', 'uncategorized', 'link_category')->term_id : 0;
-
+        $pending = array();
         foreach ($all_links as $link) {
             if ($link->link_visible === 'Y') continue; // 已通过的跳过
             $link_cats = wp_get_object_terms($link->link_id, 'link_category', array('fields' => 'ids'));
@@ -540,27 +555,33 @@ class Argon_FriendLink_Apply {
 
         // 获取所有链接分类，用于下拉菜单
         $all_categories = get_terms(array('taxonomy' => 'link_category', 'hide_empty' => false));
+        $approved_cat_id = $this->ensure_approved_category();
         ?>
         <div class="wrap">
-            <h1>待审核友链申请</h1>
+            <h1>待审核友链</h1>
             <?php if (isset($_GET['message'])): ?>
                 <div class="notice notice-success">
-                    <p><?php echo $_GET['message'] === 'approved' ? '✅ 链接已批准并移入选定分类。' : '🗑️ 链接已删除。'; ?></p>
+                    <p><?php
+                        if ($_GET['message'] === 'approved') echo '✅ 链接已批准并移入选定分类。';
+                        elseif ($_GET['message'] === 'bulk_approved') echo '✅ 已批量批准链接。';
+                        elseif ($_GET['message'] === 'deleted') echo '🗑️ 链接已删除。';
+                    ?></p>
                 </div>
             <?php endif; ?>
 
             <?php if (empty($pending)): ?>
                 <div class="notice notice-info"><p>🎉 暂无待审核的友链申请！</p></div>
             <?php else: ?>
-                <form method="post" id="bulk-approve-form">
+                <form method="post" action="<?php echo admin_url('admin-post.php?action=self_fl_bulk_approve'); ?>">
+                    <?php wp_nonce_field('self_fl_bulk_action', 'bulk_nonce'); ?>
                     <table class="wp-list-table widefat striped">
                         <thead>
                             <tr><th><input type="checkbox" id="select-all"></th><th>ID</th><th>网站名称</th><th>链接地址</th><th>Logo</th><th>简介</th><th>提交时间</th><th>批准后分类</th><th>操作</th></tr>
                         </thead>
                         <tbody>
-                        <?php foreach ($pending as $link): 
-                            $link_cats = wp_get_object_terms($link->link_id, 'link_category', array('fields' => 'names'));
-                            $current_cat = !empty($link_cats) ? $link_cats[0] : '未分类';
+                        <?php foreach ($pending as $link):
+                            // 生成单个批准使用的 nonce (用于 POST 表单)
+                            $single_nonce = wp_create_nonce('self_fl_manage_' . $link->link_id);
                         ?>
                         <tr>
                                 <td><input type="checkbox" name="link_ids[]" value="<?php echo $link->link_id; ?>"></td>
@@ -571,16 +592,17 @@ class Argon_FriendLink_Apply {
                                 <td><?php echo esc_html($link->link_description); ?></td>
                                 <td><?php echo esc_html($link->link_updated); ?></td>
                                 <td>
-                                    <select name="category_<?php echo $link->link_id; ?>" class="link-category-select">
+                                    <select name="single_category_<?php echo $link->link_id; ?>" class="link-category-select" data-link-id="<?php echo $link->link_id; ?>">
+                                        <option value="0" <?php selected(0, 0); ?>>请选择分类（默认网线空间）</option>
                                         <?php foreach ($all_categories as $cat): ?>
-                                            <option value="<?php echo $cat->term_id; ?>" <?php selected($cat->name, self::APPROVED_CATEGORY); ?>><?php echo esc_html($cat->name); ?></option>
+                                            <option value="<?php echo $cat->term_id; ?>" <?php selected($cat->term_id, $approved_cat_id); ?>><?php echo esc_html($cat->name); ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </td>
                                 <td>
                                     <a href="<?php echo admin_url('link.php?action=edit&link_id=' . $link->link_id); ?>" class="button button-small">✏️ 编辑</a>
-                                    <a href="<?php echo admin_url('admin-post.php?action=argon_fl_approve&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small button-primary" onclick="return confirm('批准后，该友链将公开显示并移入「网线空间」分类。确认通过？')">✅ 批准</a>
-                                    <a href="<?php echo admin_url('admin-post.php?action=argon_fl_delete&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('argon_fl_manage_' . $link->link_id)); ?>" class="button button-small" style="background:#ef4444; color:white;" onclick="return confirm('确认删除该申请？删除后不可恢复。')">🗑️ 删除</a>
+                                    <a href="javascript:void(0);" class="button button-small button-primary approve-single" data-link-id="<?php echo $link->link_id; ?>" data-nonce="<?php echo esc_attr($single_nonce); ?>">✅ 批准</a>
+                                    <a href="<?php echo admin_url('admin-post.php?action=self_fl_delete&link_id=' . $link->link_id . '&_wpnonce=' . wp_create_nonce('self_fl_manage_' . $link->link_id)); ?>" class="button button-small" style="background:#ef4444; color:white;" onclick="return confirm('确认删除该申请？删除后不可恢复。')">🗑️ 删除</a>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -589,8 +611,9 @@ class Argon_FriendLink_Apply {
                     <div style="margin-top:20px;">
                         <label>批量批准后分类：</label>
                         <select name="bulk_category">
+                            <option value="0">请选择分类（默认网线空间）</option>
                             <?php foreach ($all_categories as $cat): ?>
-                                <option value="<?php echo $cat->term_id; ?>" <?php selected($cat->name, self::APPROVED_CATEGORY); ?>><?php echo esc_html($cat->name); ?></option>
+                                <option value="<?php echo $cat->term_id; ?>" <?php selected($cat->term_id, $approved_cat_id); ?>><?php echo esc_html($cat->name); ?></option>
                             <?php endforeach; ?>
                         </select>
                         <button type="submit" name="bulk_approve" class="button button-primary">批量批准</button>
@@ -604,7 +627,7 @@ class Argon_FriendLink_Apply {
         <style>
             .wp-list-table td { vertical-align: middle; }
             .button-primary { background: #10b981 !important; border-color: #10b981 !important; }
-            .link-category-select { min-width: 120px; }
+            .link-category-select { min-width: 138px; }
         </style>
         <script>
         jQuery(document).ready(function($) {
@@ -612,43 +635,29 @@ class Argon_FriendLink_Apply {
             $('#select-all').on('click', function() {
                 $('input[name="link_ids[]"]').prop('checked', this.checked);
             });
-            // 单个批准按钮提交（携带对应的分类选择）
+
+            // 单个批准：动态创建表单并提交，携带选择的分类
             $('.approve-single').on('click', function(e) {
                 e.preventDefault();
-                var $row = $(this).closest('tr');
-                var link_id = $(this).val();
+                var $btn = $(this);
+                var link_id = $btn.data('link-id');
+                var nonce = $btn.data('nonce');
+                // 获取当前行中对应的 select 值
+                var $row = $btn.closest('tr');
                 var category = $row.find('.link-category-select').val();
-                var form = $('<form method="post" action="<?php echo admin_url('admin-post.php?action=argon_fl_approve'); ?>"></form>');
+                var categoryName = $row.find('.link-category-select option:selected').text();
+
+                // 确认对话框，显示选择的分类名称
+                if (!confirm('批准后，该友链将公开显示并移入“' + categoryName + '”分类。确认通过？')) {
+                    return;
+                }
+
+                var form = $('<form method="post" action="<?php echo admin_url('admin-post.php?action=self_fl_approve'); ?>"></form>');
                 form.append('<input type="hidden" name="link_id" value="' + link_id + '">');
                 form.append('<input type="hidden" name="target_category" value="' + category + '">');
-                form.append('<input type="hidden" name="_wpnonce" value="<?php echo wp_create_nonce('argon_fl_manage_'); ?>' + link_id + '">');
+                form.append('<input type="hidden" name="_wpnonce" value="' + nonce + '">');
                 $('body').append(form);
                 form.submit();
-            });
-            // 批量批准
-            $('#bulk-approve-form').on('submit', function(e) {
-                if ($('input[name="bulk_approve"]').is(':focus')) {
-                    // 批量批准逻辑：收集选中的 link_ids 和批量分类
-                    var selected = [];
-                    $('input[name="link_ids[]"]:checked').each(function() { selected.push($(this).val()); });
-                    if (selected.length === 0) {
-                        alert('请至少选择一个链接。');
-                        e.preventDefault();
-                        return false;
-                    }
-                    var bulkCat = $('select[name="bulk_category"]').val();
-                    // 为每个选中的链接动态生成一个表单并提交（或使用 AJAX，此处使用逐个提交）
-                    for (var i = 0; i < selected.length; i++) {
-                        var form = $('<form method="post" action="<?php echo admin_url('admin-post.php?action=argon_fl_approve'); ?>"></form>');
-                        form.append('<input type="hidden" name="link_id" value="' + selected[i] + '">');
-                        form.append('<input type="hidden" name="target_category" value="' + bulkCat + '">');
-                        form.append('<input type="hidden" name="_wpnonce" value="<?php echo wp_create_nonce('argon_fl_manage_'); ?>' + selected[i] + '">');
-                        $('body').append(form);
-                        form.submit();
-                    }
-                    e.preventDefault();
-                    return false;
-                }
             });
         });
         </script>
@@ -701,4 +710,4 @@ class Argon_FriendLink_Apply {
 }
 
 // 初始化插件
-new Argon_FriendLink_Apply();
+new Self_FriendLink_Apply();
