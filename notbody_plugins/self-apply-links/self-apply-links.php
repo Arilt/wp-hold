@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.4
+ * Version: 1.1.5
  * Author: 小崽安
  */
 
@@ -146,14 +146,13 @@ class Self_FriendLink_Apply {
         // 仍然需要 AJAX 参数，这些会通过 wp_localize_script 在头部输出
         if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
             has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
-                wp_enqueue_script('jquery');
-                // 仅传递 AJAX 参数，JS 代码移至 wp_footer
-                wp_localize_script('jquery', 'self_fl_ajax', array(
-                    'ajax_url' => admin_url('admin-ajax.php'),
-                    'nonce'    => wp_create_nonce('self_fl_submit_nonce'),
-                ));
-            }
+            wp_enqueue_script('jquery');
+            // 提供 ajax_url，nonce 改由表单内嵌传递，不再依赖本地化
+            wp_localize_script('jquery', 'self_fl_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+            ));
         }
+    }
 
     public function output_inline_css() {
         // 确保在任何页面都输出 CSS（样式不会冲突）
@@ -174,6 +173,9 @@ class Self_FriendLink_Apply {
                 return;
             }
             var $ = jQuery;
+
+            // 获取 AJAX URL（优先从全局变量，否则默认）
+            var ajax_url = (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.ajax_url) ? self_fl_ajax.ajax_url : (window.location.origin + '/wp-admin/admin-ajax.php');
             
             // 独立页面表单提交
             $("#self-fl-form").off("submit").on("submit", function(e) {
@@ -184,21 +186,23 @@ class Self_FriendLink_Apply {
                 $msg.hide().removeClass("success error").html("");
                 // 显示 loading
                 $btn.addClass("loading").prop("disabled", true);
+                // 从表单中获取 nonce
+                var nonce = $form.find('input[name="self_fl_nonce"]').val();
+                if (!nonce) {
+                    $msg.addClass("error").html("❌ 安全验证参数缺失，请刷新页面后重试。").show();
+                    $btn.removeClass("loading").prop("disabled", false);
+                    return;
+                }
                 var data = {
                     action: "submit_friendlink_apply",
-                    nonce: (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.nonce) ? self_fl_ajax.nonce : '',
+                    nonce: nonce,
                     site_name: $("#site_name").val(),
                     site_url: $("#site_url").val(),
                     site_logo: $("#site_logo").val(),
                     description: $("#description").val(),
                     rss: $("#rss").val()
                 };
-                if (!data.nonce) {
-                    $msg.addClass("error").html("❌ 系统错误：安全验证参数缺失，请刷新页面后重试。").show();
-                    $btn.removeClass("loading").prop("disabled", false);
-                    return;
-                }
-                $.post(self_fl_ajax.ajax_url, data, function(res) {
+                $.post(ajax_url, data, function(res) {
                     $btn.removeClass("loading").prop("disabled", false);
                     if (res.success) {
                         $msg.addClass("success").html("✅ " + res.data).show();
@@ -246,21 +250,22 @@ class Self_FriendLink_Apply {
                 var $btn = $modalForm.find(".btn-submit");
                 $modalMsg.hide().removeClass("success error").html("");
                 $btn.addClass("loading").prop("disabled", true);
+                var nonce = $modalForm.find('input[name="self_fl_nonce"]').val();
+                if (!nonce) {
+                    $modalMsg.addClass("error").html("❌ 安全验证参数缺失，请刷新页面后重试。").show();
+                    $btn.removeClass("loading").prop("disabled", false);
+                    return;
+                }
                 var data = {
                     action: "submit_friendlink_apply",
-                    nonce: (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.nonce) ? self_fl_ajax.nonce : '',
+                    nonce: nonce,
                     site_name: $("#modal_site_name").val(),
                     site_url: $("#modal_site_url").val(),
                     site_logo: $("#modal_site_logo").val(),
                     description: $("#modal_description").val(),
                     rss: $("#modal_rss").val()
                 };
-                if (!data.nonce) {
-                    $modalMsg.addClass("error").html("❌ 系统错误：安全验证参数缺失，请刷新页面后重试。").show();
-                    $btn.removeClass("loading").prop("disabled", false);
-                    return;
-                }
-                $.post(self_fl_ajax.ajax_url, data, function(res) {
+                $.post(ajax_url, data, function(res) {
                     $btn.removeClass("loading").prop("disabled", false);
                     if (res.success) {
                         $modalMsg.addClass("success").html("✅ " + res.data).show();
@@ -363,9 +368,7 @@ class Self_FriendLink_Apply {
             transition: color 0.2s;
         }
         .self-fl-modal-close:hover { color: #000; }
-        .self-fl-modal-container .self-fl-criteria {
-            margin-top: 0;
-        }
+        .self-fl-modal-container .self-fl-criteria { margin-top: 0; }
         ';
     }
 
@@ -373,10 +376,12 @@ class Self_FriendLink_Apply {
      * 独立页面表单短代码
      */
     public function render_apply_form() {
+        $nonce = wp_create_nonce('self_fl_submit_nonce');
         ob_start();
         ?>
         <div id="self-fl-message" class="self-fl-message" style="display:none;"></div>
         <form id="self-fl-form">
+            <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>"> //存在隐患
             <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
             <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
             <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
@@ -399,6 +404,7 @@ class Self_FriendLink_Apply {
         ), $atts);
         $button_text = esc_html($atts['text']);
         $button_class = esc_attr($atts['class']);
+        $nonce = wp_create_nonce('self_fl_submit_nonce');
         ob_start();
         ?>
         <button class="self-fl-modal-trigger <?php echo $button_class; ?>"><?php echo $button_text; ?></button>
@@ -407,6 +413,7 @@ class Self_FriendLink_Apply {
                 <span class="self-fl-modal-close">&times;</span>
                 <div id="self-fl-modal-message" class="self-fl-message" style="display:none;"></div>
                 <form id="self-fl-modal-form">
+                    <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>">
                     <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="modal_site_name" placeholder="例如：并非正文" required></div>
                     <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="modal_site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
                     <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="modal_site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
