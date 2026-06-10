@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: 小崽安
  */
 
@@ -182,7 +182,7 @@ class Self_FriendLink_Apply {
         .self-fl-message.error { background: #f8d7da; colo r:#721c24; border:1px solid #f5c6cb; }
         .required-tip { text-align:center; font-size:0.8rem; color: #6c757d; }
 
-        /* 模态框样式 */
+        /* 模态框样式 - 使用 class 切换显示 */
         .self-fl-modal-overlay {
             position: fixed;
             top: 0;
@@ -192,9 +192,12 @@ class Self_FriendLink_Apply {
             background: rgba(0, 0, 0, 0.18);
             backdrop-filter: blur(8px);
             z-index: 99999;
-            display: none;
             justify-content: center;
             align-items: center;
+            display: none;  /* 默认隐藏 */
+        }
+        .self-fl-modal-overlay.show {
+            display: flex;  /* 显示时使用 flex */
         }
         .self-fl-modal-container {
             background: #fff;
@@ -264,26 +267,24 @@ class Self_FriendLink_Apply {
                 if (!confirm("重置表单所有内容？")) e.preventDefault();
             });
 
-            // 模态框逻辑
+            // 模态框逻辑 - 使用 class "show" 控制显示
             var $modal = $("#self-fl-modal-overlay");
             var $modalForm = $("#self-fl-modal-form");
             var $modalMsg = $("#self-fl-modal-message");
 
-            // 打开模态框（不清空表单，保留已填内容）
+            // 打开模态框（保留已填内容）
             $(document).on("click", ".self-fl-modal-trigger", function(e) {
                 e.preventDefault();
-                // 确保覆盖层是 flex 显示且隐藏状态重置
-                $modal.css("display", "flex");
+                $modal.addClass("show");  // 添加 show 类显示模态框
                 $("body").css("overflow", "hidden");
                 // 只清空消息，不清空表单字段
                 $modalMsg.hide().removeClass("success error").html("");
-                // $modalForm[0].reset();
             });
 
             // 关闭模态框（保留表单内容，不清空）
             $(".self-fl-modal-close, .self-fl-modal-overlay").on("click", function(e) {
                 if (e.target === this) {
-                    $modal.hide();
+                    $modal.removeClass("show");  // 移除 show 类隐藏模态框
                     $("body").css("overflow", "");
                 }
             });
@@ -310,7 +311,7 @@ class Self_FriendLink_Apply {
                         // 提交成功后重置表单并3秒后自动关闭模态框
                         $modalForm[0].reset();
                         setTimeout(function() {
-                            $modal.hide();
+                            $modal.removeClass("show");
                             $("body").css("overflow", "");
                         }, 2000);
                     } else {
@@ -589,17 +590,7 @@ class Self_FriendLink_Apply {
         wp_update_link($update_data);
 
         // 可选：从「待审核友链」分类中移出（保留在其它分类或不做处理）
-        // 2. 更新至「网线空间」分类
-        // $approved_cat_id = $this->ensure_approved_category();
-        // if (is_wp_error($approved_cat_id) || !is_numeric($approved_cat_id) || $approved_cat_id <= 0) {
-        //     error_log('Self FriendLink: 「网线空间」分类无效 - ' . (is_wp_error($approved_cat_id) ? $approved_cat_id->get_error_message() : 'ID为空'));
-        // } else {
-        //     // 3. 将链接的分类替换为「网线空间」
-        //     $set_terms = wp_set_object_terms($link_id, (int) $approved_cat_id, 'link_category', false);
-        //     if (is_wp_error($set_terms)) {
-        //         error_log('Self FriendLink: 将链接移入「网线空间」失败 - ' . $set_terms->get_error_message());
-        //     }
-        // }
+        // 2. 更新至「网线空间」分类（如果指定了分类）
         if (!is_wp_error($target_cat_id) && $target_cat_id > 0) {
             wp_set_object_terms($link_id, (int) $target_cat_id, 'link_category', false);
         }
