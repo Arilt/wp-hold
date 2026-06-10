@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.3
+ * Version: 1.1.4
  * Author: 小崽安
  */
 
@@ -40,7 +40,7 @@ class Self_FriendLink_Apply {
         // 加载前端资源
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_head', array($this, 'output_inline_css')); // 直接输出 CSS
-        add_action('wp_footer', array($this, 'output_inline_js')); // 在 footer 输出 JS
+        add_action('wp_footer', array($this, 'output_inline_js_and_pjax')); // 在 footer 输出包含 pjax 支持的 JS
 
         // AJAX 处理申请提交（前台）
         add_action('wp_ajax_submit_friendlink_apply', array($this, 'handle_ajax_submit'));
@@ -143,7 +143,7 @@ class Self_FriendLink_Apply {
      * 加载前端资源（内联 CSS + JS）
      */
     public function enqueue_scripts() {
-        // 仅加载 jQuery，CSS 由 wp_head 直接输出
+        // 仍然需要 AJAX 参数，这些会通过 wp_localize_script 在头部输出
         if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
             has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
                 wp_enqueue_script('jquery');
@@ -156,15 +156,149 @@ class Self_FriendLink_Apply {
         }
 
     public function output_inline_css() {
+        // 确保在任何页面都输出 CSS（样式不会冲突）
         echo '<style>' . $this->get_inline_css() . '</style>';
     }
 
-    public function output_inline_js() {
-        // 仅在需要时输出 JS
-        if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
-            has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
-            echo '<script>' . $this->get_inline_js() . '</script>';
+    public function output_inline_js_and_pjax() {
+        // 重要：无论当前页面是否包含短代码，都输出带有 pjax 支持的初始化脚本
+        // 因为 Pjax 跳转后，整个页面的 <body> 内容会被替换，但 <head> 中的内容不会变
+        // 所以这个脚本必须预先存在于页面中，然后通过 pjaxLoaded 反复执行初始化逻辑
+        ?>
+        <script id="self-fl-pjax-loader">
+        // 核心初始化函数：绑定独立表单、模态框事件
+        function self_fl_bind_events() {
+            if (typeof jQuery === 'undefined') {
+                // 如果 jQuery 尚未加载，等待一小段时间再试
+                setTimeout(self_fl_bind_events, 100);
+                return;
+            }
+            var $ = jQuery;
+            
+            // 独立页面表单提交
+            $("#self-fl-form").off("submit").on("submit", function(e) {
+                e.preventDefault();
+                var $form = $(this);
+                var $msg = $("#self-fl-message");
+                var $btn = $form.find(".btn-submit");
+                $msg.hide().removeClass("success error").html("");
+                // 显示 loading
+                $btn.addClass("loading").prop("disabled", true);
+                var data = {
+                    action: "submit_friendlink_apply",
+                    nonce: (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.nonce) ? self_fl_ajax.nonce : '',
+                    site_name: $("#site_name").val(),
+                    site_url: $("#site_url").val(),
+                    site_logo: $("#site_logo").val(),
+                    description: $("#description").val(),
+                    rss: $("#rss").val()
+                };
+                if (!data.nonce) {
+                    $msg.addClass("error").html("❌ 系统错误：安全验证参数缺失，请刷新页面后重试。").show();
+                    $btn.removeClass("loading").prop("disabled", false);
+                    return;
+                }
+                $.post(self_fl_ajax.ajax_url, data, function(res) {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    if (res.success) {
+                        $msg.addClass("success").html("✅ " + res.data).show();
+                        $("#self-fl-form")[0].reset();
+                    } else {
+                        $msg.addClass("error").html("❌ " + res.data).show();
+                    }
+                }).fail(function() {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    $msg.addClass("error").html("❌ 网络错误，请稍后再试。").show();
+                });
+            });
+            
+            // 独立页面重置按钮确认
+            $(".btn-reset").off("click").on("click", function(e) {
+                if (!confirm("重置表单所有内容？")) e.preventDefault();
+            });
+
+            // 模态框逻辑 - 使用 class "show" 控制显示
+            var $modal = $("#self-fl-modal-overlay");
+            var $modalForm = $("#self-fl-modal-form");
+            var $modalMsg = $("#self-fl-modal-message");
+
+            // 打开模态框
+            $(document).off("click", ".self-fl-modal-trigger").on("click", ".self-fl-modal-trigger", function(e) {
+                e.preventDefault();
+                $modal.addClass("show");
+                $("body").css("overflow", "hidden");
+                // 只清空消息，不清空表单字段
+                $modalMsg.hide().removeClass("success error").html("");
+            });
+
+            // 关闭模态框（保留表单内容，不清空）
+            $modal.off("click", ".self-fl-modal-close, .self-fl-modal-overlay");
+            $(".self-fl-modal-close, .self-fl-modal-overlay").off("click").on("click", function(e) {
+                if (e.target === this) {
+                    $modal.removeClass("show");
+                    $("body").css("overflow", "");
+                }
+            });
+
+            // 模态框内表单提交
+            $modalForm.off("submit").on("submit", function(e) {
+                e.preventDefault();
+                var $btn = $modalForm.find(".btn-submit");
+                $modalMsg.hide().removeClass("success error").html("");
+                $btn.addClass("loading").prop("disabled", true);
+                var data = {
+                    action: "submit_friendlink_apply",
+                    nonce: (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.nonce) ? self_fl_ajax.nonce : '',
+                    site_name: $("#modal_site_name").val(),
+                    site_url: $("#modal_site_url").val(),
+                    site_logo: $("#modal_site_logo").val(),
+                    description: $("#modal_description").val(),
+                    rss: $("#modal_rss").val()
+                };
+                if (!data.nonce) {
+                    $modalMsg.addClass("error").html("❌ 系统错误：安全验证参数缺失，请刷新页面后重试。").show();
+                    $btn.removeClass("loading").prop("disabled", false);
+                    return;
+                }
+                $.post(self_fl_ajax.ajax_url, data, function(res) {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    if (res.success) {
+                        $modalMsg.addClass("success").html("✅ " + res.data).show();
+                        // 提交成功后重置表单并3秒后自动关闭模态框
+                        $modalForm[0].reset();
+                        setTimeout(function() {
+                            $modal.removeClass("show");
+                            $("body").css("overflow", "");
+                        }, 2000);
+                    } else {
+                        $modalMsg.addClass("error").html("❌ " + res.data).show();
+                    }
+                }).fail(function() {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    $modalMsg.addClass("error").html("❌ 网络错误，请稍后再试。").show();
+                });
+            });
         }
+        
+        // 页面直接加载时执行初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', self_fl_bind_events);
+        } else {
+            self_fl_bind_events();
+    }
+        
+        // Argon 主题 Pjax 支持：每次 Pjax 加载完成后重新绑定事件
+        if (typeof window.pjaxLoaded === 'function') {
+            var originalPjaxLoaded = window.pjaxLoaded;
+            window.pjaxLoaded = function() {
+                originalPjaxLoaded();
+                self_fl_bind_events();
+            };
+        } else {
+            window.pjaxLoaded = self_fl_bind_events;
+        }
+        </script>
+        <?php
     }
 
     /**
@@ -188,7 +322,7 @@ class Self_FriendLink_Apply {
         .btn-reset { background: #6c757d; color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
         .self-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
         .self-fl-message.success { background: #d4edda; color: #155724; border:1px solid #c3e6cb; }
-        .self-fl-message.error { background: #f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+        .self-fl-message.error { background: #f8d7da; color: #721c24; border:1px solid #f5c6cb; }
         .required-tip { text-align:center; font-size:0.8rem; color: #6c757d; }
 
         /* 模态框样式 - 使用 class 切换显示 */
@@ -232,110 +366,6 @@ class Self_FriendLink_Apply {
         .self-fl-modal-container .self-fl-criteria {
             margin-top: 0;
         }
-        ';
-    }
-
-    /**
-     * 前端 JS 脚本（AJAX 提交）
-     */
-    private function get_inline_js() {
-        return '
-        // jQuery(document).ready(function($) {
-        (function($) {
-            // 等待 DOM 完全加载
-            $(function() {
-                // 独立页面表单提交
-                $("#self-fl-form").on("submit", function(e) {
-                    e.preventDefault();
-                    var $form = $(this);
-                    var $msg = $("#self-fl-message");
-                    var $btn = $form.find(".btn-submit");
-                    $msg.hide().removeClass("success error").html("");
-                    // 显示 loading
-                    $btn.addClass("loading").prop("disabled", true);
-                    var data = {
-                        action: "submit_friendlink_apply",
-                        nonce: self_fl_ajax.nonce,
-                        site_name: $("#site_name").val(),
-                        site_url: $("#site_url").val(),
-                        site_logo: $("#site_logo").val(),
-                        description: $("#description").val(),
-                        rss: $("#rss").val()
-                    };
-                    $.post(self_fl_ajax.ajax_url, data, function(res) {
-                        $btn.removeClass("loading").prop("disabled", false);
-                        if (res.success) {
-                            $msg.addClass("success").html("✅ " + res.data).show();
-                            $("#self-fl-form")[0].reset();
-                        } else {
-                            $msg.addClass("error").html("❌ " + res.data).show();
-                        }
-                    }).fail(function() {
-                        $btn.removeClass("loading").prop("disabled", false);
-                        $msg.addClass("error").html("❌ 网络错误，请稍后再试。").show();
-                    });
-                });
-                $(".btn-reset").on("click", function(e) {
-                    if (!confirm("重置表单所有内容？")) e.preventDefault();
-                });
-
-                // 模态框逻辑 - 使用 class "show" 控制显示
-                var $modal = $("#self-fl-modal-overlay");
-                var $modalForm = $("#self-fl-modal-form");
-                var $modalMsg = $("#self-fl-modal-message");
-
-                // 打开模态框（保留已填内容）
-                $(document).on("click", ".self-fl-modal-trigger", function(e) {
-                    e.preventDefault();
-                    $modal.addClass("show");  // 添加 show 类显示模态框
-                    $("body").css("overflow", "hidden");
-                    // 只清空消息，不清空表单字段
-                    $modalMsg.hide().removeClass("success error").html("");
-                });
-
-                // 关闭模态框（保留表单内容，不清空）
-                $(".self-fl-modal-close, .self-fl-modal-overlay").on("click", function(e) {
-                    if (e.target === this) {
-                        $modal.removeClass("show");  // 移除 show 类隐藏模态框
-                        $("body").css("overflow", "");
-                    }
-                });
-
-                // 模态框内表单提交
-                $modalForm.on("submit", function(e) {
-                    e.preventDefault();
-                    var $btn = $modalForm.find(".btn-submit");
-                    $modalMsg.hide().removeClass("success error").html("");
-                    $btn.addClass("loading").prop("disabled", true);
-                    var data = {
-                        action: "submit_friendlink_apply",
-                        nonce: self_fl_ajax.nonce,
-                        site_name: $("#modal_site_name").val(),
-                        site_url: $("#modal_site_url").val(),
-                        site_logo: $("#modal_site_logo").val(),
-                        description: $("#modal_description").val(),
-                        rss: $("#modal_rss").val()
-                    };
-                    $.post(self_fl_ajax.ajax_url, data, function(res) {
-                        $btn.removeClass("loading").prop("disabled", false);
-                        if (res.success) {
-                            $modalMsg.addClass("success").html("✅ " + res.data).show();
-                            // 提交成功后重置表单并3秒后自动关闭模态框
-                            $modalForm[0].reset();
-                            setTimeout(function() {
-                                $modal.removeClass("show");
-                                $("body").css("overflow", "");
-                            }, 2000);
-                        } else {
-                            $modalMsg.addClass("error").html("❌ " + res.data).show();
-                        }
-                    }).fail(function() {
-                        $btn.removeClass("loading").prop("disabled", false);
-                        $modalMsg.addClass("error").html("❌ 网络错误，请稍后再试。").show();
-                    });
-                });
-            });
-        })(jQuery);
         ';
     }
 
@@ -464,7 +494,6 @@ class Self_FriendLink_Apply {
         .friend-link-desc { font-size: 0.8rem; color: #718096; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         @media (max-width: 640px) { .friend-link-list { grid-template-columns: 1fr; } }
         </style>';
-
         return $output;
     }
 
