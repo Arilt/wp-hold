@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.5
+ * Version: 1.1.6
  * Author: 小崽安
  */
 
@@ -147,9 +147,12 @@ class Self_FriendLink_Apply {
         if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
             has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
             wp_enqueue_script('jquery');
+            // 【修复】使用 site_url 拼接 admin-ajax.php，确保在子目录安装时路径正确
+            $ajax_url = site_url('wp-admin/admin-ajax.php');
             // 提供 ajax_url，nonce 改由表单内嵌传递，不再依赖本地化
             wp_localize_script('jquery', 'self_fl_ajax', array(
-                'ajax_url' => admin_url('admin-ajax.php'),
+                // 'ajax_url' => admin_url('admin-ajax.php'),
+                'ajax_url' => $ajax_url,
             ));
         }
     }
@@ -174,8 +177,10 @@ class Self_FriendLink_Apply {
             }
             var $ = jQuery;
 
-            // 获取 AJAX URL（优先从全局变量，否则默认）
-            var ajax_url = (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.ajax_url) ? self_fl_ajax.ajax_url : (window.location.origin + '/wp-admin/admin-ajax.php');
+            // 【修复】获取 AJAX URL（优先使用全局变量，否则根据当前页面路径推断）
+            var ajax_url = (typeof self_fl_ajax !== 'undefined' && self_fl_ajax.ajax_url)
+                ? self_fl_ajax.ajax_url
+                : (window.location.origin + window.location.pathname.split('/').slice(0, -1).join('/') + '/wp-admin/admin-ajax.php');
             
             // 独立页面表单提交
             $("#self-fl-form").off("submit").on("submit", function(e) {
@@ -381,7 +386,7 @@ class Self_FriendLink_Apply {
         ?>
         <div id="self-fl-message" class="self-fl-message" style="display:none;"></div>
         <form id="self-fl-form">
-            <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>"> //存在隐患
+            <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>"> //存在隐患？
             <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
             <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
             <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
