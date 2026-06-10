@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Self FriendLink Apply
- * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器（wp_links），支持 AJAX 提交、邮件通知、后台审核。短代码 [self_friendlink_apply] 和 [self_friendlink_list]
- * Version: 1.0.0
+ * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
+ * Version: 1.1.0
  * Author: 小崽安
  */
 
@@ -34,6 +34,7 @@ class Self_FriendLink_Apply {
 
         // 注册短代码
         add_shortcode('self_friendlink_apply', array($this, 'render_apply_form'));
+        add_shortcode('self_friendlink_apply_modal', array($this, 'render_modal_button'));
         add_shortcode('self_friendlink_list', array($this, 'render_friendlink_list'));
 
         // 加载前端资源
@@ -49,8 +50,8 @@ class Self_FriendLink_Apply {
         // 邮件中的快速操作（通过 admin-post 处理，避免权限问题）
         add_action('admin_post_self_fl_approve', array($this, 'handle_approve'));
         add_action('admin_post_self_fl_delete', array($this, 'handle_delete'));
-
-        add_action('admin_post_self_fl_bulk_approve', array($this, 'handle_bulk_approve')); // 新增批量处理
+        // 批量处理待审核友链
+        add_action('admin_post_self_fl_bulk_approve', array($this, 'handle_bulk_approve'));
 
         // 在链接列表页添加「待审核」筛选
         add_action('restrict_manage_links', array($this, 'add_link_visibility_filter'));
@@ -71,8 +72,6 @@ class Self_FriendLink_Apply {
     /**
      * 确保「待审核友链」分类存在，返回其 term_id（整数）
      * 修复：强制返回整数类型，避免返回数组或 WP_Error
-     *
-     * @__return int|WP_Error
      */
     private function ensure_pending_category() {
         $term_name = self::PENDING_CATEGORY;
@@ -100,7 +99,8 @@ class Self_FriendLink_Apply {
             // 如果创建失败（例如 slug 冲突），再次尝试通过 slug 获取
             $fallback = get_term_by('slug', $slug, $taxonomy);
             if ($fallback instanceof WP_Term) return (int) $fallback->term_id;
-            return $term; // 返回错误对象，上层会处理
+            // 返回错误对象，上层会处理
+            return $term;
         }
 
         return (int) $term['term_id'];
@@ -142,13 +142,14 @@ class Self_FriendLink_Apply {
      */
     public function enqueue_scripts() {
         if (has_shortcode(get_post()->post_content, 'self_friendlink_apply')) {
-            wp_add_inline_style('wp-block-library', $this->get_inline_css());
-            wp_enqueue_script('jquery');
-            wp_add_inline_script('jquery', $this->get_inline_js());
-            wp_localize_script('jquery', 'self_fl_ajax', array(
-                'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce'    => wp_create_nonce('self_fl_submit_nonce'),
-            ));
+                wp_add_inline_style('wp-block-library', $this->get_inline_css());
+                wp_enqueue_script('jquery');
+                wp_add_inline_script('jquery', $this->get_inline_js());
+                wp_localize_script('jquery', 'self_fl_ajax', array(
+                    'ajax_url' => admin_url('admin-ajax.php'),
+                    'nonce'    => wp_create_nonce('self_fl_submit_nonce'),
+                ));
+            }
         }
     }
 
@@ -157,23 +158,63 @@ class Self_FriendLink_Apply {
      */
     private function get_inline_css() {
         return '
-        .self-fl-container { max-width:800px; margin:2rem auto; padding:1.5rem; background:#fff; border-radius:1rem; box-shadow:0 10px 25px -5px rgba(0,0,0,0.05); }
-        .self-fl-criteria { background:#e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
+        /* 独立页面表单样式 */
+        .self-fl-container { max-width:800px; margin:2rem auto; padding:1.5rem; background: #fff; border-radius:1rem; box-shadow:0 10px 25px -5px rgba(0,0,0,0.05); }
+        .self-fl-criteria { background: #e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
         .form-group { margin-bottom:1.2rem; }
         .form-group label { display:block; font-weight:600; margin-bottom:0.3rem; }
         .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #ccc; border-radius:0.375rem; }
-        .required-star { color:#3b82f6; }
+        .required-star { color: #3b82f6; }
         .form-actions { display:flex; gap:0.75rem; justify-content:center; margin:1.5rem 0 1rem; }
-        .btn-submit { background:linear-gradient(135deg,#5c6ac4,#3b4b9e); color:#fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; position:relative; }
+        .btn-submit { background:linear-gradient(135deg, #5c6ac4, #3b4b9e); color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; position:relative; }
         .btn-submit .spinner { display:none; width:20px; height:20px; margin:0 auto; border:2px solid #fff; border-top-color: transparent; border-radius:50%; animation: spin 0.8s linear infinite; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); }
         .btn-submit.loading { color:transparent; }
         .btn-submit.loading .spinner { display:block; }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-        .btn-reset { background:#6c757d; color:#fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
+        .btn-reset { background: #6c757d; color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
         .self-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
         .self-fl-message.success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
         .self-fl-message.error { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
         .required-tip { text-align:center; font-size:0.8rem; color:#6c757d; }
+
+        /* 模态框样式 */
+        .self-fl-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.18);
+            backdrop-filter: blur(8px);
+            z-index: 99999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+        .self-fl-modal-container {
+            background: #fff;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            border-radius: 1rem;
+            padding: 2rem;
+            position: relative;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .self-fl-modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+            transition: color 0.2s;
+        }
+        .self-fl-modal-close:hover { color: #000; }
+        .self-fl-modal-container .self-fl-criteria {
+            margin-top: 0;
+        }
         ';
     }
 
@@ -183,6 +224,7 @@ class Self_FriendLink_Apply {
     private function get_inline_js() {
         return '
         jQuery(document).ready(function($) {
+            // 独立页面表单提交
             $("#self-fl-form").on("submit", function(e) {
                 e.preventDefault();
                 var $form = $(this);
@@ -216,12 +258,69 @@ class Self_FriendLink_Apply {
             $(".btn-reset").on("click", function(e) {
                 if (!confirm("重置表单所有内容？")) e.preventDefault();
             });
+
+            // 模态框逻辑
+            var $modal = $("#self-fl-modal-overlay");
+            var $modalForm = $("#self-fl-modal-form");
+            var $modalMsg = $("#self-fl-modal-message");
+
+            // 打开模态框
+            $(document).on("click", ".self-fl-modal-trigger", function(e) {
+                e.preventDefault();
+                $modal.css("display", "flex");
+                $("body").css("overflow", "hidden");
+                // 清空旧消息
+                $modalMsg.hide().removeClass("success error").html("");
+                $modalForm[0].reset();
+            });
+
+            // 关闭模态框
+            $(".self-fl-modal-close, .self-fl-modal-overlay").on("click", function(e) {
+                if (e.target === this) {
+                    $modal.hide();
+                    $("body").css("overflow", "");
+                }
+            });
+
+            // 模态框内表单提交
+            $modalForm.on("submit", function(e) {
+                e.preventDefault();
+                var $btn = $modalForm.find(".btn-submit");
+                $modalMsg.hide().removeClass("success error").html("");
+                $btn.addClass("loading").prop("disabled", true);
+                var data = {
+                    action: "submit_friendlink_apply",
+                    nonce: self_fl_ajax.nonce,
+                    site_name: $("#modal_site_name").val(),
+                    site_url: $("#modal_site_url").val(),
+                    site_logo: $("#modal_site_logo").val(),
+                    description: $("#modal_description").val(),
+                    rss: $("#modal_rss").val()
+                };
+                $.post(self_fl_ajax.ajax_url, data, function(res) {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    if (res.success) {
+                        $modalMsg.addClass("success").html("✅ " + res.data).show();
+                        $modalForm[0].reset();
+                        // 3秒后自动关闭模态框
+                        setTimeout(function() {
+                            $modal.hide();
+                            $("body").css("overflow", "");
+                        }, 2000);
+                    } else {
+                        $modalMsg.addClass("error").html("❌ " + res.data).show();
+                    }
+                }).fail(function() {
+                    $btn.removeClass("loading").prop("disabled", false);
+                    $modalMsg.addClass("error").html("❌ 网络错误，请稍后再试。").show();
+                });
+            });
         });
         ';
     }
 
     /**
-     * 渲染申请表单短代码
+     * 渲染独立页面的申请表单短代码
      */
     public function render_apply_form() {
         ob_start();
@@ -236,6 +335,38 @@ class Self_FriendLink_Apply {
             <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重提</button></div>
             <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
         </form>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * 模态框按钮短代码（生成触发按钮 + 模态框结构）
+     */
+    public function render_modal_button($atts, $content = null) {
+        $atts = shortcode_atts(array(
+            'text' => '📝 申请友链',
+            'class' => '',
+        ), $atts);
+        $button_text = esc_html($atts['text']);
+        $button_class = esc_attr($atts['class']);
+        ob_start();
+        ?>
+        <button class="self-fl-modal-trigger <?php echo $button_class; ?>"><?php echo $button_text; ?></button>
+        <div id="self-fl-modal-overlay" class="self-fl-modal-overlay">
+            <div class="self-fl-modal-container">
+                <span class="self-fl-modal-close">&times;</span>
+                <div id="self-fl-modal-message" class="self-fl-message" style="display:none;"></div>
+                <form id="self-fl-modal-form">
+                    <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="modal_site_name" placeholder="例如：并非正文" required></div>
+                    <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="modal_site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
+                    <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="modal_site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
+                    <div class="form-group"><label>描述 <span class="required-star">*</span></label><textarea id="modal_description" rows="3" placeholder="请输入简介" required></textarea></div>
+                    <div class="form-group"><label>RSS 地址</label><input type="url" id="modal_rss" placeholder="https://yourdomain.com/feed.xml"><small>可选，请填写有效的 RSS 地址</small></div>
+                    <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重提</button></div>
+                    <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
+                </form>
+            </div>
+        </div>
         <?php
         return ob_get_clean();
     }
@@ -262,7 +393,8 @@ class Self_FriendLink_Apply {
             // 获取该分类下所有可见链接（link_visible = 'Y'）
             $bookmarks = get_bookmarks(array(
                 'category' => $category->term_id,
-                'hide_invisible' => true,   // 仅获取 link_visible = 'Y' 的链接
+                // 仅获取 link_visible = 'Y' 的链接
+                'hide_invisible' => true,
                 'orderby' => 'name',
                 'order' => 'ASC',
             ));
@@ -310,16 +442,14 @@ class Self_FriendLink_Apply {
         .friend-link-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
         .friend-link-name { font-size: 1rem; font-weight: 600; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .friend-link-desc { font-size: 0.8rem; color: #718096; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        @media (max-width: 640px) {
-            .friend-link-list { grid-template-columns: 1fr; }
-        }
+        @media (max-width: 640px) { .friend-link-list { grid-template-columns: 1fr; } }
         </style>';
 
         return $output;
     }
 
     /**
-     * AJAX 处理表单提交 - 写入 WordPress 内置链接管理器（防止重复提交）
+     * AJAX 处理表单提交（独立页面和模态框共用） - 写入 WordPress 内置链接管理器（防止重复提交）
      */
     public function handle_ajax_submit() {
         // 验证 Nonce
@@ -359,12 +489,12 @@ class Self_FriendLink_Apply {
 
         // 构建链接数据（使用 WordPress 原生函数 wp_insert_link）
         $link_data = array(
-            'link_name' => $site_name,                      // 网站名称（不添加前缀）
+            'link_name' => $site_name,    // 网站名称（不添加前缀）
             'link_url' => $site_url,
             'link_image' => $site_logo,
             'link_description' => $description,
             'link_rss' => $rss,
-            'link_visible' => 'N',                              // 'N' = 不可见，待审核状态
+            'link_visible' => 'N',        // 'N' = 不可见，待审核状态
             'link_target' => '_blank',
             'link_notes' => '来自友链插件',
         );
@@ -399,7 +529,6 @@ class Self_FriendLink_Apply {
         $edit_url    = admin_url('link.php?action=edit&link_id=' . $link_id);            // 编辑该链接
         $approve_url = admin_url('admin-post.php?action=self_fl_approve&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('self_fl_manage_' . $link_id));
         $delete_url  = admin_url('admin-post.php?action=self_fl_delete&link_id=' . $link_id . '&_wpnonce=' . wp_create_nonce('self_fl_manage_' . $link_id));
-
         $subject = "【新友链】-- 「{$site_name}」 提交了友链申请";
         $message = "<html><body>
         <div style='background:#fff; border-radius:6px; padding:35px 30px; max-width:1200px; margin:15px auto;'>
