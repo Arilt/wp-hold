@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: 小崽安
  */
 
@@ -39,6 +39,7 @@ class Self_FriendLink_Apply {
 
         // 加载前端资源
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
+        add_action('wp_head', array($this, 'output_inline_css')); // 直接输出 CSS
 
         // AJAX 处理申请提交（前台）
         add_action('wp_ajax_submit_friendlink_apply', array($this, 'handle_ajax_submit'));
@@ -141,8 +142,9 @@ class Self_FriendLink_Apply {
      * 加载前端资源（内联 CSS + JS）
      */
     public function enqueue_scripts() {
-        if (has_shortcode(get_post()->post_content, 'self_friendlink_apply')) {
-                wp_add_inline_style('wp-block-library', $this->get_inline_css());
+        // 仅加载 jQuery，CSS 由 wp_head 直接输出
+        if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
+            has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
                 wp_enqueue_script('jquery');
                 wp_add_inline_script('jquery', $this->get_inline_js());
                 wp_localize_script('jquery', 'self_fl_ajax', array(
@@ -151,6 +153,9 @@ class Self_FriendLink_Apply {
                 ));
             }
         }
+
+    public function output_inline_css() {
+        echo '<style>' . $this->get_inline_css() . '</style>';
     }
 
     /**
@@ -173,9 +178,9 @@ class Self_FriendLink_Apply {
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
         .btn-reset { background: #6c757d; color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
         .self-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
-        .self-fl-message.success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
-        .self-fl-message.error { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
-        .required-tip { text-align:center; font-size:0.8rem; color:#6c757d; }
+        .self-fl-message.success { background: #d4edda; color: #155724; border:1px solid #c3e6cb; }
+        .self-fl-message.error { background: #f8d7da; colo r:#721c24; border:1px solid #f5c6cb; }
+        .required-tip { text-align:center; font-size:0.8rem; color: #6c757d; }
 
         /* 模态框样式 */
         .self-fl-modal-overlay {
@@ -264,17 +269,18 @@ class Self_FriendLink_Apply {
             var $modalForm = $("#self-fl-modal-form");
             var $modalMsg = $("#self-fl-modal-message");
 
-            // 打开模态框
+            // 打开模态框（不清空表单，保留已填内容）
             $(document).on("click", ".self-fl-modal-trigger", function(e) {
                 e.preventDefault();
+                // 确保覆盖层是 flex 显示且隐藏状态重置
                 $modal.css("display", "flex");
                 $("body").css("overflow", "hidden");
-                // 清空旧消息
+                // 只清空消息，不清空表单字段
                 $modalMsg.hide().removeClass("success error").html("");
-                $modalForm[0].reset();
+                // $modalForm[0].reset();
             });
 
-            // 关闭模态框
+            // 关闭模态框（保留表单内容，不清空）
             $(".self-fl-modal-close, .self-fl-modal-overlay").on("click", function(e) {
                 if (e.target === this) {
                     $modal.hide();
@@ -301,8 +307,8 @@ class Self_FriendLink_Apply {
                     $btn.removeClass("loading").prop("disabled", false);
                     if (res.success) {
                         $modalMsg.addClass("success").html("✅ " + res.data).show();
+                        // 提交成功后重置表单并3秒后自动关闭模态框
                         $modalForm[0].reset();
-                        // 3秒后自动关闭模态框
                         setTimeout(function() {
                             $modal.hide();
                             $("body").css("overflow", "");
@@ -320,7 +326,7 @@ class Self_FriendLink_Apply {
     }
 
     /**
-     * 渲染独立页面的申请表单短代码
+     * 独立页面表单短代码
      */
     public function render_apply_form() {
         ob_start();
@@ -689,15 +695,12 @@ class Self_FriendLink_Apply {
         <div class="wrap">
             <h1>待审核友链</h1>
             <?php if (isset($_GET['message'])): ?>
-                <div class="notice notice-success">
-                    <p><?php
+                <div class="notice notice-success"><p><?php
                         if ($_GET['message'] === 'approved') echo '✅ 链接已批准并移入选定分类。';
                         elseif ($_GET['message'] === 'bulk_approved') echo '✅ 已批量批准链接。';
                         elseif ($_GET['message'] === 'deleted') echo '🗑️ 链接已删除。';
-                    ?></p>
-                </div>
+                ?></p></div>
             <?php endif; ?>
-
             <?php if (empty($pending)): ?>
                 <div class="notice notice-info"><p>🎉 暂无待审核的友链申请！</p></div>
             <?php else: ?>
@@ -769,8 +772,7 @@ class Self_FriendLink_Apply {
             $('.approve-single').on('click', function(e) {
                 e.preventDefault();
                 var $btn = $(this);
-                var link_id = $btn.data('link-id');
-                var nonce = $btn.data('nonce');
+                var link_id = $btn.data('link-id'), nonce = $btn.data('nonce');
                 // 获取当前行中对应的 select 值
                 var $row = $btn.closest('tr');
                 var category = $row.find('.link-category-select').val();
@@ -813,7 +815,8 @@ class Self_FriendLink_Apply {
      * @——param object $query WP_Link_Query 对象
      */
     public function filter_links_by_visibility($query) {
-        if (!is_admin() || !isset($_GET['link_visible']) || $_GET['link_visible'] === '' || empty($_GET['link_visible'])) return;
+        // if (!is_admin() || !isset($_GET['link_visible']) || $_GET['link_visible'] === '' || empty($_GET['link_visible'])) return;
+        if (!is_admin() || empty($_GET['link_visible'])) return;
         $vis = $_GET['link_visible'];
         if ($vis === 'Y' || $vis === 'N') $query->query_vars['link_visible'] = $vis;
     }
