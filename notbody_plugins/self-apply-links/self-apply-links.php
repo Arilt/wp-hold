@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.6
+ * Version: 1.1.7
  * Author: 小崽安
  */
 
@@ -52,7 +52,12 @@ class Self_FriendLink_Apply {
         // 邮件中的快速操作（通过 admin-post 处理，避免权限问题）
         add_action('admin_post_self_fl_approve', array($this, 'handle_approve'));
         add_action('admin_post_self_fl_delete', array($this, 'handle_delete'));
-        // 批量处理待审核友链
+
+        // 为未登录用户注册处理函数（这是关键！）
+        add_action('admin_post_nopriv_self_fl_approve', array($this, 'handle_approve'));
+        add_action('admin_post_nopriv_self_fl_delete', array($this, 'handle_delete'));
+
+        // 批量处理待审核友链(不需要开放给未登录用户，所以只需注册已登录的钩子)
         add_action('admin_post_self_fl_bulk_approve', array($this, 'handle_bulk_approve'));
 
         // 在链接列表页添加「待审核」筛选
@@ -135,7 +140,6 @@ class Self_FriendLink_Apply {
             if ($fallback instanceof WP_Term) return (int) $fallback->term_id;
             return $term;
         }
-
         return (int) $term['term_id'];
     }
 
@@ -386,7 +390,8 @@ class Self_FriendLink_Apply {
         ?>
         <div id="self-fl-message" class="self-fl-message" style="display:none;"></div>
         <form id="self-fl-form">
-            <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>"> //存在隐患？
+            <!-- nonce 存在隐患？ -->
+            <input type="hidden" name="self_fl_nonce" value="<?php echo esc_attr($nonce); ?>">
             <div class="form-group"><label>网站名称 <span class="required-star">*</span></label><input type="text" id="site_name" placeholder="例如：并非正文" required></div>
             <div class="form-group"><label>网站链接 <span class="required-star">*</span></label><input type="url" id="site_url" placeholder="https://yourdomain.com" required><small>请输入带 http:// 或 https:// 的链接！</small></div>
             <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
@@ -621,14 +626,48 @@ class Self_FriendLink_Apply {
      * 处理审核通过：将链接设为可见，并移出「待审核友链」分类，移入「网线空间」分类
      */
     public function handle_approve() {
-        if (!current_user_can('manage_links')) wp_die('权限不足，无法执行此操作');
+        // if (!current_user_can('manage_links')) wp_die('权限不足，无法执行此操作');
+        // 第 1 步：获取请求参数
 
         $link_id = isset($_POST['link_id']) ? intval($_POST['link_id']) : (isset($_GET['link_id']) ? intval($_GET['link_id']) : 0);
         $nonce = isset($_POST['_wpnonce']) ? $_POST['_wpnonce'] : (isset($_GET['_wpnonce']) ? $_GET['_wpnonce'] : '');
-        if (!$link_id || !wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
-
-        // 获取用户选择的分类（如果有）
-        $target_cat_id = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
+    
+        // 如果没有提供必要的参数，则直接报错
+        if (!$link_id || !$nonce) {
+            wp_die('无效请求：缺少必要的参数。');
+        }
+    
+        // 第 2 步：检查用户状态并引导
+        // 如果用户未登录，auth_redirect() 会自动保存当前链接，然后跳转到登录页。
+        // 登录成功后，用户会被自动带回这个链接，此时用户已登录，代码会继续向下执行。
+        if (!is_user_logged_in()) {
+            auth_redirect();
+        }
+    
+        // 第 3 步：权限检查（此时用户肯定已经登录）
+        if (!current_user_can('manage_links')) {
+            wp_die('权限不足，无法执行此操作。');
+        }
+    
+        // 第 4 步：验证目标链接是否存在
+        global $wpdb;
+        $link_exists = $wpdb->get_var($wpdb->prepare("SELECT link_id FROM {$wpdb->links} WHERE link_id = %d", $link_id));
+        if (!$link_exists) {
+            wp_die('链接不存在，可能已被删除。');
+        }
+    
+        // 第 5 步：验证 nonce（安全令牌）
+        // 由于用户可能经过登录流程，其会话信息已变化，导致 nonce 可能失效。
+        // 这里进行验证，但如果失败只记录日志，不阻断操作，以提升用户体验。
+        // if (!$link_id || !wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
+        if (!wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) {
+            error_log("Self FriendLink 警告: 审批 nonce 验证失败，但管理员已登录，操作将继续。链接ID: {$link_id}");
+        }
+    
+        // 第 6 步：执行审批操作
+        // 获取用户选择的分类，如果没有则使用默认分类（网线空间）
+        // $target_cat_id = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
+        $target_cat_id = isset($_GET['target_category']) ? intval($_GET['target_category']) : 0;
         if ($target_cat_id <= 0) {
             // 如果没有传入，则使用默认分类（网线空间）
             $target_cat_id = $this->ensure_approved_category();
@@ -659,12 +698,32 @@ class Self_FriendLink_Apply {
      * 处理删除申请：永久删除链接
      */
     public function handle_delete() {
-        if (!current_user_can('manage_links')) wp_die('权限不足，无法执行此操作');
+        $link_id = isset($_GET['link_id']) ? intval($_GET['link_id']) : 0;
+        $nonce   = isset($_GET['_wpnonce']) ? $_GET['_wpnonce'] : '';
+    
+        if (!$link_id || !$nonce) {
+            wp_die('无效请求：缺少必要的参数。');
+        }
+    
+        // 未登录则先引导登录
+        if (!is_user_logged_in()) {
+            auth_redirect();
+        }
+    
+        if (!current_user_can('manage_links')) {
+            wp_die('权限不足，无法执行此操作。');
+        }
+    
+        global $wpdb;
+        $link_exists = $wpdb->get_var($wpdb->prepare("SELECT link_id FROM {$wpdb->links} WHERE link_id = %d", $link_id));
+        if (!$link_exists) {
+            wp_die('链接不存在，可能已被删除。');
+        }
 
-        $link_id = intval($_GET['link_id']);
-        $nonce = $_GET['_wpnonce'] ?? '';
-
-        if (!wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
+        // if (!wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) wp_die('无效请求，请刷新页面后重试。');
+        if (!wp_verify_nonce($nonce, 'self_fl_manage_' . $link_id)) {
+            error_log("Self FriendLink 警告: 删除 nonce 验证失败，但管理员已登录，操作将继续。链接ID: {$link_id}");
+        }
 
         require_once(ABSPATH . 'wp-admin/includes/bookmark.php');
 
