@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Self FriendLink Apply
  * Description: 自助申请友链（内置链接管理器版），数据写入 WordPress 内置链接管理器，支持模态框弹窗申请及独立页面申请。短代码 [self_friendlink_apply]（独立页面）、[self_friendlink_apply_modal]（模态框按钮） 和 [self_friendlink_list]（友链展示列表），支持 AJAX 提交、邮件通知、后台审核。
- * Version: 1.1.7
+ * Version: 1.2.0
  * Author: 小崽安
  */
 
@@ -148,8 +148,9 @@ class Self_FriendLink_Apply {
      */
     public function enqueue_scripts() {
         // 仍然需要 AJAX 参数，这些会通过 wp_localize_script 在头部输出
-        if (has_shortcode(get_post()->post_content, 'self_friendlink_apply') ||
-            has_shortcode(get_post()->post_content, 'self_friendlink_apply_modal')) {
+        $post = get_post();
+        if ($post && (has_shortcode($post->post_content, 'self_friendlink_apply') ||
+            has_shortcode($post->post_content, 'self_friendlink_apply_modal'))) {
             wp_enqueue_script('jquery');
             // 【修复】使用 site_url 拼接 admin-ajax.php，确保在子目录安装时路径正确
             $ajax_url = site_url('wp-admin/admin-ajax.php');
@@ -318,26 +319,51 @@ class Self_FriendLink_Apply {
     /**
      * 前端 CSS 样式（保持原有风格）
      */
-    private function get_inline_css() {
+        private function get_inline_css() {
         return '
         /* 独立页面表单样式 */
         .self-fl-container { max-width:800px; margin:2rem auto; padding:1.5rem; background: #fff; border-radius:1rem; box-shadow:0 10px 25px -5px rgba(0,0,0,0.05); }
         .self-fl-criteria { background: #e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
         .form-group { margin-bottom:1.2rem; }
         .form-group label { display:block; font-weight:600; margin-bottom:0.3rem; }
-        .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #ccc; border-radius:0.375rem; }
+        .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #ccc; border-radius:0.375rem; 
+            background: color-mix(in srgb, var(--color-widgets, #fff) 10%, transparent); 
+            backdrop-filter: blur(10px); 
+            -webkit-backdrop-filter: blur(10px); 
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); 
+            transition: all 0.3s ease;}
+        /* Focus state for better UX */
+        .form-group input:focus, .form-group textarea:focus { border-color: var(--themecolor, #1E7BC7);  outline: none;  box-shadow: 0 4px 12px rgba(92, 106, 196, 0.15);  }
         .required-star { color: #3b82f6; }
         .form-actions { display:flex; gap:0.75rem; justify-content:center; margin:1.5rem 0 1rem; }
-        .btn-submit { background:linear-gradient(135deg, #5c6ac4, #3b4b9e); color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; position:relative; }
+        .btn-submit { background:linear-gradient(135deg, #5c6ac4, var(--themecolor, #1E7BC7)); color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; position:relative; }
         .btn-submit .spinner { display:none; width:20px; height:20px; margin:0 auto; border:2px solid #fff; border-top-color: transparent; border-radius:50%; animation: spin 0.8s linear infinite; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); }
         .btn-submit.loading { color:transparent; }
         .btn-submit.loading .spinner { display:block; }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-        .btn-reset { background: #6c757d; color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
+        .btn-reset { background: #3b88c3; color: #fff; border:none; padding:0.6rem 1.8rem; border-radius:2rem; cursor:pointer; }
         .self-fl-message { padding:0.8rem 1rem; border-radius:0.5rem; margin-bottom:1.5rem; }
         .self-fl-message.success { background: #d4edda; color: #155724; border:1px solid #c3e6cb; }
         .self-fl-message.error { background: #f8d7da; color: #721c24; border:1px solid #f5c6cb; }
         .required-tip { text-align:center; font-size:0.8rem; color: #6c757d; }
+
+        /* 模态框触发按钮样式 - 始终水平居中 */
+        .self-fl-modal-trigger {
+            display: block;
+            margin: 0 auto;
+            /* 继承原有按钮的一些基本样式，确保美观 */
+            background: linear-gradient(135deg, #5c6ac4, var(--themecolor, #1E7BC7));
+            color: #fff;
+            border: none;
+            padding: 0.6rem 1.8rem;
+            border-radius: 2rem;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: opacity 0.2s;
+        }
+        .self-fl-modal-trigger:hover {
+            opacity: 0.9;
+        }
 
         /* 模态框样式 - 使用 class 切换显示 */
         .self-fl-modal-overlay {
@@ -357,7 +383,7 @@ class Self_FriendLink_Apply {
             display: flex;  /* 显示时使用 flex */
         }
         .self-fl-modal-container {
-            background: #fff;
+            background: color-mix(in srgb, var(--color-background, #fff) 66%, transparent);
             width: 90%;
             max-width: 600px;
             max-height: 90vh;
@@ -397,7 +423,7 @@ class Self_FriendLink_Apply {
             <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
             <div class="form-group"><label>描述 <span class="required-star">*</span></label><textarea id="description" rows="3" placeholder="请输入简介" required></textarea></div>
             <div class="form-group"><label>RSS 地址</label><input type="url" id="rss" placeholder="https://yourdomain.com/feed.xml"><small>可选，请填写有效的 RSS 地址</small></div>
-            <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重提</button></div>
+            <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重填</button></div>
             <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
         </form>
         <?php
@@ -429,7 +455,7 @@ class Self_FriendLink_Apply {
                     <div class="form-group"><label>站点 Logo <span class="required-star">*</span></label><input type="url" id="modal_site_logo" placeholder="https://yourdomain.com/logo.png" required></div>
                     <div class="form-group"><label>描述 <span class="required-star">*</span></label><textarea id="modal_description" rows="3" placeholder="请输入简介" required></textarea></div>
                     <div class="form-group"><label>RSS 地址</label><input type="url" id="modal_rss" placeholder="https://yourdomain.com/feed.xml"><small>可选，请填写有效的 RSS 地址</small></div>
-                    <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重提</button></div>
+                    <div class="form-actions"><button type="submit" class="btn-submit">📨 提交申请<span class="spinner"></span></button><button type="reset" class="btn-reset">🔄 重填</button></div>
                     <div class="required-tip"><span class="required-star">*</span> 提示：带有浅蓝色星号 * 的项，表示必填项～</div>
                 </form>
             </div>
@@ -439,7 +465,7 @@ class Self_FriendLink_Apply {
     }
 
     /**
-     * 渲染友链列表（按分类展示，参考 neighbors 页面风格）
+     * 渲染友链列表（按分类展示）
      * 使用 get_bookmarks() 获取内置链接管理器中的公开链接
      */
     public function render_friendlink_list() {
@@ -451,7 +477,7 @@ class Self_FriendLink_Apply {
 
         if (is_wp_error($categories) || empty($categories)) return '<p>暂无友链分类。</p>';
 
-        $output = '<div class="friend-links friend-links-style1">';
+        $output = '<div class="friend-links friend-links-style">';
 
         foreach ($categories as $category) {
             // 跳过「待审核友链」分类（不对外展示）
@@ -468,26 +494,27 @@ class Self_FriendLink_Apply {
 
             if (empty($bookmarks)) continue;
 
-            $output .= '<div class="friend-link-category">';
+            $output .= '<div class="friend-link-cate">';
             $output .= '<h3 class="category-title">' . esc_html($category->name) . '</h3>';
             $output .= '<ul class="friend-link-list">';
 
             foreach ($bookmarks as $bookmark) {
-                $output .= '<li class="friend-link-item">';
-                $output .= '<a href="' . esc_url($bookmark->link_url) . '" target="_blank" rel="noopener noreferrer nofollow">';
-
+                $output .= '<div class="friend-link-item"><div class="friend-link-ctnr">';
+                /* 【新增】友链头像失效处理 */
                 if (!empty($bookmark->link_image)) {
-                    $output .= '<img src="' . esc_url($bookmark->link_image) . '" alt="' . esc_attr($bookmark->link_name) . '" class="friend-link-avatar">';
+                    $output .= '<img src="' . esc_url($bookmark->link_image) . '" alt="' . esc_attr($bookmark->link_name) . '" class="friend-link-avatar" onerror="this.onerror=null; this.src=\'https://img-cfr2.norc.cn/2025/03/tpsx.svg\'">';
                 } else {
                     $output .= '<div class="friend-link-avatar-placeholder">' . mb_substr($bookmark->link_name, 0, 1) . '</div>';
                 }
 
-                $output .= '<div class="friend-link-info">';
-                $output .= '<span class="friend-link-name">' . esc_html($bookmark->link_name) . '</span>';
+                $output .= '<div class="friend-link-content">';
+                $output .= '<div class="friend-link-title title text-primary"><a href="' . esc_url($bookmark->link_url) . '" target="_blank" rel="noopener noreferrer nofollow">';
+                $output .= esc_html($bookmark->link_name) . '</a></div>';
                 if (!empty($bookmark->link_description)) {
-                    $output .= '<span class="friend-link-desc">' . esc_html($bookmark->link_description) . '</span>';
+                    $output .= '<div class="friend-link-desc">' . esc_html($bookmark->link_description) . '</div>';
                 }
-                $output .= '</div></a></li>';
+                $output .= '<div class="friend-link-links"><a href="' . esc_url($bookmark->link_url) . '" target="_blank"><i class="fa fa-angle-right" style="display: flex; align-items: center; font-weight: bold;"><span style="font-size:0.83rem">&nbsp;访问</span></i></a></div>';
+                $output .= '</div></div></div>';
             }
 
             $output .= '</ul></div>';
@@ -495,20 +522,24 @@ class Self_FriendLink_Apply {
 
         $output .= '</div>';
 
-        // 内嵌友链列表样式（参考 neighbors 页面风格）
+        // 内嵌友链列表样式
         $output .= '<style>
-        .friend-links-style1 { max-width: 1200px; margin: 0 auto; }
-        .friend-link-category { margin-bottom: 2rem; }
-        .category-title { font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #5c6ac4; display: inline-block; }
+        .friend-links-style { max-width: 1200px; margin: 0 auto; }
+        .friend-link-cate { margin-bottom: 2rem; }
+        .category-title { font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--themecolor, #1E7BC7); display: inline-block; }
         .friend-link-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; list-style: none; margin: 0; padding: 0; }
-        .friend-link-item { background: var(--card-bg, #fff); border-radius: 0.75rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: all 0.3s ease; overflow: hidden; }
+        .friend-link-item { border-radius: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: all 0.3s ease; overflow: hidden; }
+        .friend-link-ctnr { display: flex; align-items: center; gap: 10px; /*border-radius:1.25rem;*/ overflow: hidden; white-space: nowrap; background-color: var(--color-widgets) !important; }
         .friend-link-item:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
-        .friend-link-item a { display: flex; align-items: center; padding: 1rem; text-decoration: none; color: inherit; gap: 0.75rem; }
-        .friend-link-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
-        .friend-link-avatar-placeholder { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #5c6ac4, #3b4b9e); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 600; flex-shrink: 0; }
-        .friend-link-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-        .friend-link-name { font-size: 1rem; font-weight: 600; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .friend-link-item a { align-items: center; text-decoration: none; color: inherit;}
+        .friend-link-avatar { vertical-align: middle; width: 48px; height: 48px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+        .friend-link-avatar-placeholder { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #5c6ac4, var(--themecolor, #1E7BC7)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 600; flex-shrink: 0; }
+        .friend-links-style .friend-link-avatar { display: inline-block; object-fit: cover; pointer-events: none; margin: 0 0 0 20px; }
+        .friend-links-style .friend-link-content { display: inline-block; width: calc(100% - 100px); vertical-align: middle; padding: 10px 15px 10px 15px; white-space: normal; }
+        .friend-link-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+        .friend-link-title { font-size: 1rem; font-weight: 600; color: var(--themecolor, #1E7BC7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .friend-link-desc { font-size: 0.8rem; color: #718096; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .friend-link-links { float:right; margin-right: 10px; color: var(--themecolor, #1E7BC7); }
         @media (max-width: 640px) { .friend-link-list { grid-template-columns: 1fr; } }
         </style>';
         return $output;
