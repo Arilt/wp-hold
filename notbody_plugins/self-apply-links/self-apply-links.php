@@ -326,7 +326,7 @@ class Self_FriendLink_Apply {
         .self-fl-criteria { background: #e6f7ff; border-left:4px solid #5c6ac4; padding:1rem 1.5rem; border-radius:0.75rem; margin-bottom:2rem; font-size:0.95rem; }
         .form-group { margin-bottom:1.2rem; }
         .form-group label { display:block; font-weight:600; margin-bottom:0.3rem; }
-        .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #ccc; border-radius:0.375rem; 
+        .form-group input, .form-group textarea { width:100%; padding:0.6rem; border:1px solid #8eadd9; border-radius:0.375rem; 
             background: color-mix(in srgb, var(--color-widgets, #fff) 10%, transparent); 
             backdrop-filter: blur(10px); 
             -webkit-backdrop-filter: blur(10px); 
@@ -646,7 +646,7 @@ class Self_FriendLink_Apply {
                 <a href='{$approve_url}' style='background:#1174e6; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>审核通过</a>
                 <a href='{$delete_url}' style='background:#e45e5e; color:#fff; padding:10px 15px; border-radius:4px; text-decoration:none; margin:5px; display:inline-block;'>删除该链接</a>
             </p>
-            <p align='center' style='color:#6c757d; font-size:12px;'>—— 此邮件由 Self FriendLink Apply 插件自动发送 ——</p>
+            <p align='center' style='color:#6c757d; font-size:12px;'>— 此邮件由 Self FriendLink Apply 插件自动发送 —</p>
         </div>
         </body></html>";
 

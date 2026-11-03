@@ -1,13 +1,13 @@
 <?php
 /*
- * Plugin Name: CommentAddr
+ * Plugin Name: 展示评论归属地
  * Plugin URI: https://github.com/iGocsen/wp-hold
  * Description: 1.0.1为Argon主题增加评论区显示IP属地的功能 2.0.1 方便修改IP属地展示图标，在设置界面内增加设置界面，支持fa、svg、内置Icon；
  * Version: 2.0.1
  * Author: 小崽安
  * Author URI: https://bfzw.top/home
  * License: GPL v2 or later
- *  Copyright 2024  小崽安  Gocscn+wp@gmail.com
+ *  Copyright 2024  小崽安  Actriy+wp@gmail.com
  
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -71,7 +71,7 @@ function show_city_addr($r_addr) {
 add_filter("argon_comment_ua_icon", "show_city_addr");
 
 function comment_ipaddr_icon_set() {  
-    add_menu_page('评论区显示IP归属地', '评论区IP属地设置', 'manage_options', 'c_ipa_iconset_page', 'c_ipa_iconset_page');  
+    add_menu_page('评论区显示IP归属地', '评论属地', 'manage_options', 'c_ipa_iconset_page', 'c_ipa_iconset_page');  
 }  
 add_action('admin_menu', 'comment_ipaddr_icon_set'); 
 
@@ -93,14 +93,14 @@ function c_ipa_iconset_page() {
 function c_ipa_iconset_init() {  
     register_setting('c_ipa_settings', 'c_ipa_iconset_options');  
   
-    add_settings_section('c_ipa_setion', '', null, 'c_ipa_iconset_page');  
+    add_settings_section('c_ipa_section', '', null, 'c_ipa_iconset_page');  
   
     add_settings_field(  
         'c_ipa_init',  
         '内置图标预览',  
         'c_ipa_init_callback',  
         'c_ipa_iconset_page',  
-        'c_ipa_setion'  
+        'c_ipa_section'  
     );  
     
     add_settings_field(  
@@ -108,7 +108,7 @@ function c_ipa_iconset_init() {
         '图标类型',  
         'c_ipa_type_callback',  
         'c_ipa_iconset_page',  
-        'c_ipa_setion'  
+        'c_ipa_section'  
     );  
   
     add_settings_field(  
@@ -116,7 +116,7 @@ function c_ipa_iconset_init() {
         '图标代码',  
         'c_ipa_icon_callback',  
         'c_ipa_iconset_page',  
-        'c_ipa_setion'  
+        'c_ipa_section'  
     );  
 }  
 add_action('admin_init', 'c_ipa_iconset_init');  
@@ -136,21 +136,21 @@ function c_ipa_init_callback() {
             </tr>
             <tr> 
                 <td></td>
-                <td width="10" >Icon01</td> 
-                <td>Icon02</td>
+                <td width="10" >Icon 1</td> 
+                <td>Icon 2</td>
             </tr>
     <?php
 } 
 
 function c_ipa_type_callback() {  
     $options = get_option('c_ipa_iconset_options');  
-    $ipaddr_type = isset($options['ipaddr_type']) ? esc_attr($options['ipaddr_type']) : 'Icon01';  
+    $ipaddr_type = isset($options['ipaddr_type']) ? esc_attr($options['ipaddr_type']) : 'Icon_1';  
   
     echo '<select name="c_ipa_iconset_options[ipaddr_type]">';  
+    echo '<option value="Icon_1" ' . selected($ipaddr_type, 'Icon_1', false) . '>Icon 1</option>';  
+    echo '<option value="Icon_2" ' . selected($ipaddr_type, 'Icon_2', false) . '>Icon 2</option>';  
     echo '<option value="fa" ' . selected($ipaddr_type, 'fa', false) . '>Font Awesome</option>';  
     echo '<option value="svg" ' . selected($ipaddr_type, 'svg', false) . '>自定义SVG</option>';  
-    echo '<option value="Icon01" ' . selected($ipaddr_type, 'Icon01', false) . '>Icon01</option>';  
-    echo '<option value="Icon02" ' . selected($ipaddr_type, 'Icon02', false) . '>Icon02</option>';  
     echo '</select>';  
 }  
   
